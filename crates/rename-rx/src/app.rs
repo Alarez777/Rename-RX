@@ -12,9 +12,9 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use rename_rx_core::{
     CaseMode, CaseRule, ExtensionRule, FileEntry, FileId, InsertAnchor, InsertRule, NewNameRule,
-    RegexRule, RemoveRule, RenameOutcome, RenameStep, ReplaceRule, RuleSet, SerializePosition,
-    SerializeRule, Severity, SortMethod, SortRule, TextRule, ValidationReport, build_preview,
-    execute as execute_rename, plan_steps,
+    RegexRule, RemoveOrigin, RemoveRule, RenameOutcome, RenameStep, ReplaceRule, RuleSet,
+    SerializePosition, SerializeRule, Severity, SortMethod, SortRule, TextRule, ValidationReport,
+    build_preview, execute as execute_rename, plan_steps,
 };
 
 use crate::settings::{self, Settings, ThemePreference};
@@ -22,6 +22,7 @@ use crate::theme::{self, Palette, semibold};
 
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
+const RULE_ROW_HEIGHT: f32 = 34.0;
 
 #[derive(Clone, Copy)]
 struct RuleColumns {
@@ -658,8 +659,8 @@ impl RenameRxApp {
     fn rules_panel(&mut self, ui: &mut Ui) -> bool {
         let palette = self.palette();
         let content_height = ui.ctx().content_rect().height();
-        let default_height = (content_height * 0.49).clamp(180.0, 440.0);
-        let max_height = (content_height * 0.68).max(200.0);
+        let default_height = (content_height * 0.56).clamp(220.0, 480.0);
+        let max_height = (content_height * 0.72).max(240.0);
         let mut changed = false;
         let mut open_settings = self.rule_settings;
 
@@ -682,7 +683,7 @@ impl RenameRxApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         style_controls(ui, &palette);
-                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.spacing_mut().item_spacing.y = 4.0;
 
                         let regular_name_width = ui
                             .painter()
@@ -801,7 +802,8 @@ impl RenameRxApp {
                             |ui| {
                                 let gap = ui.spacing().item_spacing.x;
                                 let text_width =
-                                    (ui.available_width() - 86.0 - 72.0 - 2.0 * gap).max(80.0);
+                                    (ui.available_width() - 86.0 - 72.0 - 2.0 * gap - 6.0)
+                                        .max(80.0);
 
                                 let mut row_changed =
                                     text_edit_width(ui, text, text_width, "Text to insert");
@@ -814,6 +816,7 @@ impl RenameRxApp {
                         let RemoveRule {
                             enabled,
                             count,
+                            origin,
                             position,
                         } = remove;
                         changed |= rule_row(
@@ -826,13 +829,8 @@ impl RenameRxApp {
                             &mut open_settings,
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed = rtl_labeled_spinbox_u32(
-                                        ui,
-                                        "Before",
-                                        position,
-                                        0..=999,
-                                        56.0,
-                                    );
+                                    let mut row_changed = spinbox_u32(ui, position, 0..=999, 56.0);
+                                    row_changed |= combo_remove_origin(ui, origin);
                                     row_changed |= rtl_labeled_spinbox_u32(
                                         ui,
                                         "Characters",
@@ -850,6 +848,7 @@ impl RenameRxApp {
                             enabled,
                             start,
                             step: _,
+                            offset,
                             padding: _,
                             position,
                             prefix: _,
@@ -865,7 +864,9 @@ impl RenameRxApp {
                             &mut open_settings,
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed = combo_serialize_position(ui, position);
+                                    let mut row_changed =
+                                        spinbox_i64(ui, offset, -999_999..=999_999, 56.0);
+                                    row_changed |= combo_serialize_position(ui, position);
                                     row_changed |= rtl_labeled_spinbox_i64(
                                         ui,
                                         "Start",
@@ -1094,7 +1095,7 @@ impl RenameRxApp {
         }
     }
 
-    fn empty_state(&mut self, ui: &mut Ui) {
+    fn empty_state(&self, ui: &mut Ui) {
         let palette = self.palette();
         let top_space = ((ui.available_height() - 260.0) * 0.42).max(32.0);
 
@@ -1110,24 +1111,10 @@ impl RenameRxApp {
             );
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Add files to start renaming.")
+                RichText::new("Drop files here or use Add Files above.")
                     .size(14.0)
                     .color(palette.secondary),
             );
-            ui.add_space(18.0);
-
-            let add_files = ui.add(
-                Button::new(RichText::new("Add Files").color(palette.on_accent))
-                    .fill(palette.accent)
-                    .corner_radius(6)
-                    .min_size(vec2(120.0, 34.0)),
-            );
-            if add_files
-                .on_hover_text("Add files to rename (Ctrl+O)")
-                .clicked()
-            {
-                self.add_files_requested = true;
-            }
         });
     }
 
@@ -1565,7 +1552,7 @@ impl RenameRxApp {
                     RuleSettings::Regex => "These options apply to the regular expression.",
                     RuleSettings::Serialize => {
                         "Step, padding and the text around the number. \
-                         Start and After/Before stay in the rule row."
+                         Start, After/Before and offset stay in the rule row."
                     }
                 };
                 ui.label(
@@ -1949,7 +1936,7 @@ fn rule_row(
         ui.spacing_mut().item_spacing.x = columns.gap;
 
         ui.allocate_ui_with_layout(
-            vec2(columns.name, 28.0),
+            vec2(columns.name, RULE_ROW_HEIGHT),
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(columns.name);
@@ -1973,7 +1960,7 @@ fn rule_row(
         );
 
         ui.allocate_ui_with_layout(
-            vec2(columns.controls, 28.0),
+            vec2(columns.controls, RULE_ROW_HEIGHT),
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(columns.controls);
@@ -1983,7 +1970,7 @@ fn rule_row(
         );
 
         ui.allocate_ui_with_layout(
-            vec2(columns.settings, 28.0),
+            vec2(columns.settings, RULE_ROW_HEIGHT),
             Layout::right_to_left(Align::Center),
             |ui| {
                 ui.set_width(columns.settings);
@@ -2264,6 +2251,25 @@ fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
                 .changed();
             changed |= ui
                 .selectable_value(anchor, InsertAnchor::After, "After")
+                .changed();
+        });
+    changed
+}
+
+fn combo_remove_origin(ui: &mut Ui, origin: &mut RemoveOrigin) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt("remove_origin")
+        .selected_text(match *origin {
+            RemoveOrigin::Before => "Before",
+            RemoveOrigin::After => "After",
+        })
+        .width(84.0)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(origin, RemoveOrigin::Before, "Before")
+                .changed();
+            changed |= ui
+                .selectable_value(origin, RemoveOrigin::After, "After")
                 .changed();
         });
     changed

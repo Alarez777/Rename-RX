@@ -98,7 +98,16 @@ pub enum InsertAnchor {
 pub struct RemoveRule {
     pub enabled: bool,
     pub count: u32,
+    pub origin: RemoveOrigin,
     pub position: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoveOrigin {
+    #[default]
+    Before,
+    After,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,6 +116,7 @@ pub struct SerializeRule {
     pub enabled: bool,
     pub start: i64,
     pub step: i64,
+    pub offset: i64,
     pub padding: u32,
     pub position: SerializePosition,
     pub prefix: String,
@@ -119,6 +129,7 @@ impl Default for SerializeRule {
             enabled: false,
             start: 1,
             step: 1,
+            offset: 0,
             padding: 3,
             position: SerializePosition::After,
             // A leading space preserves the original `name 001` look;
@@ -295,6 +306,7 @@ impl<'a> CompiledRules<'a> {
             stem = remove_chars(
                 &stem,
                 self.rules.remove.count as usize,
+                self.rules.remove.origin,
                 self.rules.remove.position as usize,
             );
         }
@@ -302,7 +314,9 @@ impl<'a> CompiledRules<'a> {
         if self.rules.serialize.enabled {
             stem = serialize(
                 &stem,
-                self.rules.serialize.start + index as i64 * self.rules.serialize.step,
+                self.rules.serialize.start
+                    + index as i64 * self.rules.serialize.step
+                    + self.rules.serialize.offset,
                 self.rules.serialize.padding,
                 self.rules.serialize.position,
                 &self.rules.serialize.prefix,
@@ -363,10 +377,20 @@ fn insert_text(stem: &str, text: &str, position: usize, anchor: InsertAnchor) ->
     result
 }
 
-fn remove_chars(stem: &str, count: usize, position: usize) -> String {
+fn remove_chars(stem: &str, count: usize, origin: RemoveOrigin, position: usize) -> String {
     let graphemes: Vec<&str> = stem.graphemes(true).collect();
-    let start = position.min(graphemes.len());
-    let end = start.saturating_add(count).min(graphemes.len());
+    let len = graphemes.len();
+
+    let (start, end) = match origin {
+        RemoveOrigin::Before => {
+            let start = position.min(len);
+            (start, start.saturating_add(count).min(len))
+        }
+        RemoveOrigin::After => {
+            let end = len.saturating_sub(position.min(len));
+            (end.saturating_sub(count), end)
+        }
+    };
 
     let mut result = String::with_capacity(stem.len());
     result.extend(graphemes[..start].iter().copied());
@@ -523,21 +547,28 @@ mod tests {
             insert_text(combined, "!", 1, InsertAnchor::Before),
             "e\u{301}!x"
         );
-        assert_eq!(remove_chars("e\u{301}x", 1, 0), "x");
-        assert_eq!(remove_chars("abcdef", 2, 1), "adef");
-        assert_eq!(remove_chars("abcdef", 0, 3), "abcdef");
-        assert_eq!(remove_chars("abc", 5, 1), "a");
-        assert_eq!(remove_chars("abc", 2, 99), "abc");
+        assert_eq!(remove_chars("e\u{301}x", 1, RemoveOrigin::Before, 0), "x");
+        assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::Before, 1), "adef");
+        assert_eq!(remove_chars("abcdef", 0, RemoveOrigin::Before, 3), "abcdef");
+        assert_eq!(remove_chars("abc", 5, RemoveOrigin::Before, 1), "a");
+        assert_eq!(remove_chars("abc", 2, RemoveOrigin::Before, 99), "abc");
+        assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::After, 0), "abcd");
+        assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::After, 1), "abcf");
+        assert_eq!(remove_chars("abc", 2, RemoveOrigin::After, 99), "abc");
     }
 
     #[test]
-    fn remove_rule_starts_at_the_given_position() {
+    fn remove_rule_uses_origin_and_position() {
         let mut rules = RuleSet::default();
         rules.remove.enabled = true;
         rules.remove.count = 2;
         rules.remove.position = 1;
 
         assert_eq!(apply(&rules, "abcdef.txt", 0), "adef.txt");
+
+        rules.remove.origin = RemoveOrigin::After;
+        rules.remove.position = 0;
+        assert_eq!(apply(&rules, "abcdef.txt", 0), "abcd.txt");
     }
 
     #[test]
@@ -572,6 +603,17 @@ mod tests {
 
         assert_eq!(apply(&rules, "a.txt", 0), "0010-a.txt");
         assert_eq!(apply(&rules, "a.txt", 2), "0020-a.txt");
+    }
+
+    #[test]
+    fn serialize_offset_is_added_to_the_number() {
+        let mut rules = RuleSet::default();
+        rules.serialize.enabled = true;
+        rules.serialize.start = 1;
+        rules.serialize.offset = 2;
+
+        assert_eq!(apply(&rules, "photo.jpg", 0), "photo 003.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 1), "photo 004.jpg");
     }
 
     #[test]
