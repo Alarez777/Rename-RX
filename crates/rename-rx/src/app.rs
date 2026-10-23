@@ -693,13 +693,13 @@ impl RenameRxApp {
                             )
                             .size()
                             .x;
-                        let gap = 12.0;
+                        let gap = 10.0;
                         let name_column = (ui.spacing().icon_width
                             + ui.spacing().icon_spacing
                             + name_width
                             + 4.0)
                             .ceil();
-                        let settings_column = 40.0;
+                        let settings_column = 24.0;
                         let available = ui.available_width();
                         let controls_column =
                             (available - name_column - settings_column - 2.0 * gap).max(120.0);
@@ -751,15 +751,7 @@ impl RenameRxApp {
                             enabled,
                             Some(RuleSettings::Replace),
                             &mut open_settings,
-                            |ui| {
-                                ui.columns(2, |columns| {
-                                    let mut row_changed =
-                                        text_edit_fill(&mut columns[0], find, "Find");
-                                    row_changed |=
-                                        text_edit_fill(&mut columns[1], replace, "Replace");
-                                    row_changed
-                                })
-                            },
+                            |ui| two_text_fields(ui, find, "Find", replace, "Replace"),
                         );
 
                         let RegexRule {
@@ -777,13 +769,7 @@ impl RenameRxApp {
                             Some(RuleSettings::Regex),
                             &mut open_settings,
                             |ui| {
-                                ui.columns(2, |columns| {
-                                    let mut row_changed =
-                                        text_edit_fill(&mut columns[0], pattern, "Pattern");
-                                    row_changed |=
-                                        text_edit_fill(&mut columns[1], replacement, "Replacement");
-                                    row_changed
-                                })
+                                two_text_fields(ui, pattern, "Pattern", replacement, "Replacement")
                             },
                         );
 
@@ -802,13 +788,13 @@ impl RenameRxApp {
                             None,
                             &mut open_settings,
                             |ui| {
-                                let text_width = (ui.available_width() - 200.0).max(120.0);
-                                let mut row_changed =
-                                    text_edit_width(ui, text, text_width, "Text to insert");
-                                row_changed |=
-                                    labeled_spinbox_u32(ui, "At", position, 0..=999, 56.0);
-                                row_changed |= combo_insert_anchor(ui, anchor);
-                                row_changed
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed = spinbox_u32(ui, position, 0..=999, 56.0);
+                                    row_changed |= combo_insert_anchor(ui, anchor);
+                                    row_changed |= text_edit_fill(ui, text, "Text to insert");
+                                    row_changed
+                                })
+                                .inner
                             },
                         );
 
@@ -826,10 +812,18 @@ impl RenameRxApp {
                             None,
                             &mut open_settings,
                             |ui| {
-                                let mut row_changed =
-                                    labeled_spinbox_u32(ui, "Characters", count, 0..=999, 56.0);
-                                row_changed |= combo_remove_from(ui, from);
-                                row_changed
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed = combo_remove_from(ui, from);
+                                    row_changed |= rtl_labeled_spinbox_u32(
+                                        ui,
+                                        "Characters",
+                                        count,
+                                        0..=999,
+                                        56.0,
+                                    );
+                                    row_changed
+                                })
+                                .inner
                             },
                         );
 
@@ -850,22 +844,30 @@ impl RenameRxApp {
                             Some(RuleSettings::Serialize),
                             &mut open_settings,
                             |ui| {
-                                let mut row_changed = labeled_spinbox_i64(
-                                    ui,
-                                    "Start",
-                                    start,
-                                    -999_999..=999_999,
-                                    64.0,
-                                );
-                                row_changed |=
-                                    labeled_spinbox_u32(ui, "Padding", padding, 0..=12, 48.0);
-                                ui.label(
-                                    RichText::new("Position")
-                                        .size(12.5)
-                                        .color(ui.visuals().weak_text_color()),
-                                );
-                                row_changed |= combo_serialize_position(ui, position);
-                                row_changed
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed = combo_serialize_position(ui, position);
+                                    ui.label(
+                                        RichText::new("Position")
+                                            .size(12.5)
+                                            .color(ui.visuals().weak_text_color()),
+                                    );
+                                    row_changed |= rtl_labeled_spinbox_u32(
+                                        ui,
+                                        "Padding",
+                                        padding,
+                                        0..=12,
+                                        48.0,
+                                    );
+                                    row_changed |= rtl_labeled_spinbox_i64(
+                                        ui,
+                                        "Start",
+                                        start,
+                                        -999_999..=999_999,
+                                        64.0,
+                                    );
+                                    row_changed
+                                })
+                                .inner
                             },
                         );
 
@@ -914,7 +916,12 @@ impl RenameRxApp {
                             enabled,
                             None,
                             &mut open_settings,
-                            |ui| combo_case_mode(ui, mode),
+                            |ui| {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    combo_case_mode(ui, mode)
+                                })
+                                .inner
+                            },
                         );
 
                         let SortRule {
@@ -931,9 +938,13 @@ impl RenameRxApp {
                             None,
                             &mut open_settings,
                             |ui| {
-                                let mut row_changed = combo_sort_method(ui, method);
-                                row_changed |= ui.checkbox(descending, "Descending").changed();
-                                row_changed
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed =
+                                        ui.checkbox(descending, "Descending").changed();
+                                    row_changed |= combo_sort_method(ui, method);
+                                    row_changed
+                                })
+                                .inner
                             },
                         );
                     });
@@ -1968,12 +1979,26 @@ fn text_edit_fill(ui: &mut Ui, value: &mut String, hint: &str) -> bool {
 }
 
 fn text_edit_width(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> bool {
-    ui.add(
-        TextEdit::singleline(value)
-            .hint_text(hint.to_owned())
-            .desired_width(width),
+    ui.add_sized(
+        vec2(width, 28.0),
+        TextEdit::singleline(value).hint_text(hint.to_owned()),
     )
     .changed()
+}
+
+fn two_text_fields(
+    ui: &mut Ui,
+    first: &mut String,
+    first_hint: &str,
+    second: &mut String,
+    second_hint: &str,
+) -> bool {
+    let gap = ui.spacing().item_spacing.x;
+    let width = ((ui.available_width() - gap) / 2.0).max(60.0);
+
+    let mut changed = text_edit_width(ui, first, width, first_hint);
+    changed |= text_edit_width(ui, second, width, second_hint);
+    changed
 }
 
 fn labeled_spinbox_i64(
@@ -1998,25 +2023,37 @@ fn labeled_spinbox_i64(
     changed
 }
 
-fn labeled_spinbox_u32(
+/// Add a spinbox first and its label second. In a right-to-left parent this
+/// leaves the label on the left and the number on the right.
+fn rtl_labeled_spinbox_i64(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut i64,
+    range: RangeInclusive<i64>,
+    width: f32,
+) -> bool {
+    let changed = spinbox_i64(ui, value, range, width);
+    ui.label(
+        RichText::new(label)
+            .size(12.5)
+            .color(ui.visuals().weak_text_color()),
+    );
+    changed
+}
+
+fn rtl_labeled_spinbox_u32(
     ui: &mut Ui,
     label: &str,
     value: &mut u32,
     range: RangeInclusive<u32>,
     width: f32,
 ) -> bool {
-    let mut changed = false;
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(
-            RichText::new(label)
-                .size(12.5)
-                .color(ui.visuals().weak_text_color()),
-        );
-        changed |= spinbox_u32(ui, value, range, width);
-    });
-
+    let changed = spinbox_u32(ui, value, range, width);
+    ui.label(
+        RichText::new(label)
+            .size(12.5)
+            .color(ui.visuals().weak_text_color()),
+    );
     changed
 }
 
@@ -2024,31 +2061,36 @@ fn spinbox_i64(ui: &mut Ui, value: &mut i64, range: RangeInclusive<i64>, width: 
     let mut changed = false;
     let (min, max) = (*range.start(), *range.end());
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
+    ui.allocate_ui_with_layout(
+        vec2(width + 16.0, 28.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.set_width(width + 16.0);
+            ui.spacing_mut().item_spacing.x = 0.0;
 
-        changed |= ui
-            .add(
-                egui::DragValue::new(value)
-                    .range(range)
-                    .speed(1.0)
-                    .min_size(vec2(width, 28.0)),
-            )
-            .changed();
+            changed |= ui
+                .add(
+                    egui::DragValue::new(value)
+                        .range(range)
+                        .speed(1.0)
+                        .min_size(vec2(width, 28.0)),
+                )
+                .changed();
 
-        ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
 
-            if spin_arrow(ui, true) {
-                *value = (*value + 1).min(max);
-                changed = true;
-            }
-            if spin_arrow(ui, false) {
-                *value = (*value - 1).max(min);
-                changed = true;
-            }
-        });
-    });
+                if spin_arrow(ui, true) {
+                    *value = (*value + 1).min(max);
+                    changed = true;
+                }
+                if spin_arrow(ui, false) {
+                    *value = (*value - 1).max(min);
+                    changed = true;
+                }
+            });
+        },
+    );
 
     changed
 }
@@ -2057,31 +2099,36 @@ fn spinbox_u32(ui: &mut Ui, value: &mut u32, range: RangeInclusive<u32>, width: 
     let mut changed = false;
     let (min, max) = (*range.start(), *range.end());
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
+    ui.allocate_ui_with_layout(
+        vec2(width + 16.0, 28.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.set_width(width + 16.0);
+            ui.spacing_mut().item_spacing.x = 0.0;
 
-        changed |= ui
-            .add(
-                egui::DragValue::new(value)
-                    .range(range)
-                    .speed(1.0)
-                    .min_size(vec2(width, 28.0)),
-            )
-            .changed();
+            changed |= ui
+                .add(
+                    egui::DragValue::new(value)
+                        .range(range)
+                        .speed(1.0)
+                        .min_size(vec2(width, 28.0)),
+                )
+                .changed();
 
-        ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
 
-            if spin_arrow(ui, true) {
-                *value = (*value + 1).min(max);
-                changed = true;
-            }
-            if spin_arrow(ui, false) {
-                *value = (*value).saturating_sub(1).max(min);
-                changed = true;
-            }
-        });
-    });
+                if spin_arrow(ui, true) {
+                    *value = (*value + 1).min(max);
+                    changed = true;
+                }
+                if spin_arrow(ui, false) {
+                    *value = (*value).saturating_sub(1).max(min);
+                    changed = true;
+                }
+            });
+        },
+    );
 
     changed
 }
@@ -2118,14 +2165,14 @@ fn spin_arrow(ui: &mut Ui, up: bool) -> bool {
 }
 
 fn settings_button(ui: &mut Ui, palette: &Palette, kind: RuleSettings) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
 
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), palette.button_hover);
+            .rect_filled(rect, CornerRadius::same(5), palette.button_hover);
     } else if response.is_pointer_button_down_on() {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), palette.button_active);
+            .rect_filled(rect, CornerRadius::same(5), palette.button_active);
     }
 
     let color = if response.hovered() {
@@ -2141,18 +2188,18 @@ fn settings_button(ui: &mut Ui, palette: &Palette, kind: RuleSettings) -> bool {
 }
 
 fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
-    painter.circle_stroke(center, 6.0, Stroke::new(1.5, color));
-    painter.circle_filled(center, 2.2, color);
+    painter.circle_stroke(center, 5.0, Stroke::new(1.4, color));
+    painter.circle_filled(center, 1.8, color);
 
     for index in 0..8 {
         let angle = std::f32::consts::TAU * index as f32 / 8.0;
         let (sin, cos) = angle.sin_cos();
         painter.line_segment(
             [
-                pos2(center.x + cos * 6.0, center.y + sin * 6.0),
-                pos2(center.x + cos * 9.0, center.y + sin * 9.0),
+                pos2(center.x + cos * 5.0, center.y + sin * 5.0),
+                pos2(center.x + cos * 7.5, center.y + sin * 7.5),
             ],
-            Stroke::new(1.6, color),
+            Stroke::new(1.5, color),
         );
     }
 }
