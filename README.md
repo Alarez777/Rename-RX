@@ -41,6 +41,11 @@ binary and downloads `appimagetool` into `dist/.tools` on the first run. A
 minimal desktop entry and icon are embedded only because `appimagetool`
 requires them; they are not installed on the system.
 
+The default build uses the host toolchain, so its glibc requirement matches
+the host. The AppImage in this repository was built with Debian 12
+(glibc 2.35); to reproduce that, build the binary in Debian 12 and pass it
+with `RENAME_RX_BINARY`.
+
 If your system does not have FUSE, extract and run it:
 
 ```sh
