@@ -87,7 +87,7 @@ fn style_for(theme: Theme) -> Style {
     style.spacing.button_padding = vec2(12.0, 6.0);
     style.spacing.menu_margin = Margin::same(6);
     style.spacing.window_margin = Margin::same(16);
-    style.spacing.interact_size = vec2(40.0, 32.0);
+    style.spacing.interact_size = vec2(40.0, 28.0);
     style.spacing.icon_width = 18.0;
     style.spacing.icon_width_inner = 12.0;
     style.spacing.icon_spacing = 8.0;

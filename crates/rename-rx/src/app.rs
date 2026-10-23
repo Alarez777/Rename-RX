@@ -1,21 +1,43 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Local};
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, CornerRadius, FontId, Frame, Key, LayerId, Layout,
-    Margin, Modifiers, Order, Rect, RichText, Sense, Shadow, Stroke, StrokeKind, Theme, Ui, pos2,
-    vec2,
+    self, Align, Align2, Button, Color32, ComboBox, CornerRadius, FontId, Frame, Key, LayerId,
+    Layout, Margin, Modifiers, Order, Rect, RichText, Sense, Shadow, Stroke, StrokeKind, TextEdit,
+    Theme, Ui, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
-use rename_rx_core::FileEntry;
+use rename_rx_core::{
+    CaseMode, CaseRule, ExtensionRule, FileEntry, FileId, InsertAnchor, InsertRule, NewNameRule,
+    RegexRule, RemoveFrom, RemoveRule, RenameOutcome, RenameStep, ReplaceRule, RuleSet,
+    SerializePosition, SerializeRule, Severity, SortMethod, SortRule, TextRule, ValidationReport,
+    build_preview, execute as execute_rename, plan_steps,
+};
 
 use crate::settings::{self, Settings, ThemePreference};
 use crate::theme::{self, Palette, semibold};
 
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
+
+#[derive(Default)]
+struct PreviewCache {
+    order: Vec<usize>,
+    previews: Vec<String>,
+    report: ValidationReport,
+    dirty: bool,
+}
+
+impl PreviewCache {
+    fn new() -> Self {
+        Self {
+            dirty: true,
+            ..Self::default()
+        }
+    }
+}
 
 pub struct RenameRxApp {
     settings: Settings,
@@ -24,15 +46,22 @@ pub struct RenameRxApp {
     watcher: Option<dark_light::Watcher>,
     last_theme_check: Instant,
 
+    rules: RuleSet,
     files: Vec<FileEntry>,
     next_file_id: u64,
     selected: BTreeSet<u64>,
     selection_anchor: Option<usize>,
+    preview: PreviewCache,
     status: String,
     add_files_requested: bool,
+    rename_requested: bool,
+    last_rename: Option<Vec<RenameOutcome>>,
+    confirm_rename_open: bool,
+    rename_error: Option<String>,
 
     settings_open: bool,
     about_open: bool,
+    validation_open: bool,
 }
 
 impl RenameRxApp {
@@ -56,14 +85,21 @@ impl RenameRxApp {
             system_dark,
             watcher,
             last_theme_check: Instant::now(),
+            rules: RuleSet::default(),
             files: Vec::new(),
             next_file_id: 0,
             selected: BTreeSet::new(),
             selection_anchor: None,
+            preview: PreviewCache::new(),
             status: "Ready".to_owned(),
             add_files_requested: false,
+            rename_requested: false,
+            last_rename: None,
+            confirm_rename_open: false,
+            rename_error: None,
             settings_open: false,
             about_open: false,
+            validation_open: false,
         };
 
         app.add_paths(initial_paths);
@@ -179,6 +215,7 @@ impl RenameRxApp {
             self.selection_anchor = None;
         }
 
+        self.preview.dirty = true;
         self.status = add_status(added, duplicates, folders, failed);
     }
 
@@ -189,6 +226,8 @@ impl RenameRxApp {
         let removed = before - self.files.len();
 
         self.selection_anchor = None;
+        self.preview.dirty = true;
+        self.last_rename = None;
         if removed > 0 {
             self.status = format!("{removed} {} removed", plural(removed, "file", "files"));
         }
@@ -202,26 +241,35 @@ impl RenameRxApp {
         self.files.clear();
         self.selected.clear();
         self.selection_anchor = None;
+        self.preview.dirty = true;
+        self.last_rename = None;
         self.status = "File list cleared".to_owned();
     }
 
-    fn select_row(&mut self, id: u64, index: usize, modifiers: Modifiers) {
+    fn select_row(&mut self, id: FileId, display_index: usize, modifiers: Modifiers) {
         if modifiers.shift
             && let Some(anchor) = self.selection_anchor
         {
-            let (start, end) = if anchor <= index {
-                (anchor, index)
+            let (start, end) = if anchor <= display_index {
+                (anchor, display_index)
             } else {
-                (index, anchor)
+                (display_index, anchor)
             };
+
+            let ids: Vec<FileId> = self
+                .preview
+                .order
+                .get(start..=end)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|&file_index| self.files.get(file_index).map(|file| file.id))
+                .collect();
 
             if !modifiers.command && !modifiers.ctrl {
                 self.selected.clear();
             }
 
-            for file in self.files.iter().take(end + 1).skip(start) {
-                self.selected.insert(file.id);
-            }
+            self.selected.extend(ids);
             return;
         }
 
@@ -229,27 +277,166 @@ impl RenameRxApp {
             if !self.selected.remove(&id) {
                 self.selected.insert(id);
             }
-            self.selection_anchor = Some(index);
+            self.selection_anchor = Some(display_index);
         } else {
             self.selected.clear();
             self.selected.insert(id);
-            self.selection_anchor = Some(index);
+            self.selection_anchor = Some(display_index);
         }
     }
 
+    fn select_file_by_id(&mut self, id: FileId) {
+        if let Some(position) = self
+            .preview
+            .order
+            .iter()
+            .position(|&index| self.files.get(index).is_some_and(|file| file.id == id))
+        {
+            self.selected.clear();
+            self.selected.insert(id);
+            self.selection_anchor = Some(position);
+        }
+    }
+
+    fn recompute_preview(&mut self) {
+        let result = build_preview(&self.files, &self.rules);
+        self.preview.order = result.order;
+        self.preview.previews = result.previews;
+        self.preview.report = result.report;
+        self.preview.dirty = false;
+    }
+
+    fn handle_rename_request(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+
+        if self.preview.report.errors() > 0 {
+            self.validation_open = true;
+            return;
+        }
+
+        if self.preview.report.warnings() > 0 {
+            self.confirm_rename_open = true;
+            return;
+        }
+
+        self.perform_rename();
+    }
+
+    fn perform_rename(&mut self) {
+        let steps = plan_steps(&self.files, &self.preview.previews, &self.preview.order);
+
+        if steps.is_empty() {
+            self.status = "Nothing to rename".to_owned();
+            return;
+        }
+
+        match execute_rename(&steps) {
+            Ok(outcomes) => {
+                let renamed = outcomes.len();
+                let failures = self.reload_from_outcomes(&outcomes);
+                self.last_rename = Some(outcomes);
+                self.status = if failures == 0 {
+                    format!("{renamed} {} renamed", plural(renamed, "file", "files"))
+                } else {
+                    format!("{renamed} renamed; {failures} could not be reloaded")
+                };
+            }
+            Err(error) => {
+                self.status = "Rename failed".to_owned();
+                self.rename_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn undo_last_rename(&mut self) {
+        let Some(outcomes) = self.last_rename.take() else {
+            return;
+        };
+
+        let steps: Vec<RenameStep> = outcomes
+            .iter()
+            .map(|outcome| RenameStep {
+                from: outcome.renamed.clone(),
+                to: outcome.original.clone(),
+            })
+            .collect();
+
+        match execute_rename(&steps) {
+            Ok(reverse) => {
+                self.reload_from_outcomes(&reverse);
+                self.status = format!(
+                    "{} {} restored",
+                    reverse.len(),
+                    plural(reverse.len(), "file", "files")
+                );
+            }
+            Err(error) => {
+                self.last_rename = Some(outcomes);
+                self.status = "Undo failed".to_owned();
+                self.rename_error = Some(error.to_string());
+            }
+        }
+    }
+
+    /// Re-read the batch after a rename and return how many entries could not
+    /// be reloaded.
+    fn reload_from_outcomes(&mut self, outcomes: &[RenameOutcome]) -> usize {
+        let renamed: HashMap<PathBuf, PathBuf> = outcomes
+            .iter()
+            .map(|outcome| (outcome.original.clone(), outcome.renamed.clone()))
+            .collect();
+
+        let old_files = std::mem::take(&mut self.files);
+        let mut new_files = Vec::with_capacity(old_files.len());
+        let mut failures = 0;
+
+        for file in old_files {
+            let path = renamed
+                .get(&file.path)
+                .cloned()
+                .unwrap_or_else(|| file.path.clone());
+            match FileEntry::read(file.id, path) {
+                Ok(entry) => new_files.push(entry),
+                Err(error) => {
+                    failures += 1;
+                    eprintln!(
+                        "rename-rx: could not reload {}: {error}",
+                        file.path.display()
+                    );
+                }
+            }
+        }
+
+        self.files = new_files;
+        self.selected.clear();
+        self.selection_anchor = None;
+        self.preview.dirty = true;
+        failures
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.settings_open || self.about_open || egui::Popup::is_any_open(ctx) {
+        if self.settings_open
+            || self.about_open
+            || self.validation_open
+            || self.confirm_rename_open
+            || self.rename_error.is_some()
+            || egui::Popup::is_any_open(ctx)
+        {
             return;
         }
 
         let has_focus = ctx.memory(|memory| memory.focused().is_some());
-        let (delete, select_all, escape, open) = ctx.input_mut(|input| {
+        let (delete, select_all, escape, open, undo, rename) = ctx.input_mut(|input| {
             (
                 input.consume_key(Modifiers::NONE, Key::Delete)
                     || input.consume_key(Modifiers::NONE, Key::Backspace),
                 input.consume_key(Modifiers::COMMAND, Key::A),
                 input.consume_key(Modifiers::NONE, Key::Escape),
                 input.consume_key(Modifiers::COMMAND, Key::O),
+                input.consume_key(Modifiers::COMMAND, Key::Z),
+                input.consume_key(Modifiers::COMMAND, Key::Enter),
             )
         });
 
@@ -268,6 +455,14 @@ impl RenameRxApp {
 
         if !has_focus && select_all && !self.files.is_empty() {
             self.selected = self.files.iter().map(|file| file.id).collect();
+        }
+
+        if !has_focus && undo {
+            self.undo_last_rename();
+        }
+
+        if !has_focus && rename {
+            self.rename_requested = true;
         }
     }
 
@@ -292,6 +487,10 @@ impl RenameRxApp {
         let palette = self.palette();
         let has_files = !self.files.is_empty();
         let has_selection = !self.selected.is_empty();
+        let errors = self.preview.report.errors();
+        let warnings = self.preview.report.warnings();
+        let issue_count = errors + warnings;
+        let can_undo = self.last_rename.is_some();
 
         egui::Panel::top("headerbar")
             .exact_size(theme::HEADER_HEIGHT)
@@ -326,6 +525,18 @@ impl RenameRxApp {
                             ui.set_min_width(210.0);
 
                             if ui
+                                .add_enabled(can_undo, Button::new("Undo Rename"))
+                                .on_hover_text("Ctrl+Z")
+                                .on_disabled_hover_text("No rename to undo")
+                                .clicked()
+                            {
+                                self.undo_last_rename();
+                                ui.close();
+                            }
+
+                            ui.separator();
+
+                            if ui
                                 .add_enabled(has_selection, Button::new("Remove Selected"))
                                 .on_disabled_hover_text("Select files first")
                                 .clicked()
@@ -358,12 +569,35 @@ impl RenameRxApp {
                         });
                         menu.0.on_hover_text("Main menu");
 
-                        let validity = ui.add_enabled(false, Button::new("Validity"));
-                        validity.on_disabled_hover_text(if has_files {
-                            "Available with the rule engine"
+                        let validity_label = if issue_count == 0 {
+                            "Validity".to_owned()
                         } else {
-                            "Add files first"
-                        });
+                            format!("Validity ({issue_count})")
+                        };
+                        let validity_color = if errors > 0 {
+                            palette.danger
+                        } else if warnings > 0 {
+                            palette.warning
+                        } else {
+                            palette.text
+                        };
+
+                        let validity = ui.add_enabled(
+                            has_files,
+                            Button::new(RichText::new(validity_label).color(validity_color)),
+                        );
+                        if validity.clicked() {
+                            self.validation_open = true;
+                        }
+                        if has_files {
+                            validity.on_hover_text(format!(
+                                "{errors} {}, {warnings} {}",
+                                plural(errors, "error", "errors"),
+                                plural(warnings, "warning", "warnings")
+                            ));
+                        } else {
+                            validity.on_disabled_hover_text("Add files first");
+                        }
                     });
                 });
 
@@ -380,6 +614,212 @@ impl RenameRxApp {
                     Stroke::new(1.0, palette.border),
                 );
             });
+    }
+
+    // ---------------------------------------------------------------- rules
+
+    fn rules_panel(&mut self, ui: &mut Ui) -> bool {
+        let palette = self.palette();
+        let content_height = ui.ctx().content_rect().height();
+        let default_height = (content_height * 0.49).clamp(180.0, 440.0);
+        let max_height = (content_height * 0.68).max(200.0);
+        let mut changed = false;
+
+        egui::Panel::top("rules_panel")
+            .resizable(true)
+            .default_size(default_height)
+            .min_size(110.0)
+            .max_size(max_height)
+            .show_separator_line(false)
+            .frame(
+                Frame::new()
+                    .fill(palette.background)
+                    .inner_margin(Margin::symmetric(12, 6)),
+            )
+            .show(ui, |ui| {
+                let panel_rect = ui.clip_rect();
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        style_controls(ui, &palette);
+                        ui.spacing_mut().item_spacing.y = 3.0;
+
+                        let RuleSet {
+                            new_name,
+                            replace,
+                            regex,
+                            insert,
+                            remove,
+                            serialize,
+                            prefix,
+                            suffix,
+                            extension,
+                            case,
+                            sort,
+                        } = &mut self.rules;
+
+                        let NewNameRule { enabled, value } = new_name;
+                        changed |= rule_row(ui, &palette, "New Name", enabled, |ui| {
+                            text_edit(ui, value, 360.0, "New base name")
+                        });
+
+                        let ReplaceRule {
+                            enabled,
+                            find,
+                            replace,
+                            case_sensitive,
+                            whole_word,
+                        } = replace;
+                        changed |= rule_row(ui, &palette, "Replace", enabled, |ui| {
+                            let mut row_changed = text_edit(ui, find, 150.0, "Find");
+                            row_changed |= text_edit(ui, replace, 150.0, "Replace");
+                            row_changed |= ui
+                                .checkbox(case_sensitive, "Aa")
+                                .on_hover_text("Case sensitive")
+                                .changed();
+                            row_changed |= ui
+                                .checkbox(whole_word, "Word")
+                                .on_hover_text("Whole word")
+                                .changed();
+                            row_changed
+                        });
+
+                        let RegexRule {
+                            enabled,
+                            pattern,
+                            replacement,
+                            case_insensitive,
+                        } = regex;
+                        changed |= rule_row(ui, &palette, "Regular Expression", enabled, |ui| {
+                            let mut row_changed = text_edit(ui, pattern, 200.0, "Pattern");
+                            row_changed |= text_edit(ui, replacement, 170.0, "Replacement");
+                            row_changed |= ui
+                                .checkbox(case_insensitive, "i")
+                                .on_hover_text("Ignore case")
+                                .changed();
+                            row_changed
+                        });
+
+                        let InsertRule {
+                            enabled,
+                            text,
+                            position,
+                            anchor,
+                        } = insert;
+                        changed |= rule_row(ui, &palette, "Insert", enabled, |ui| {
+                            let mut row_changed = text_edit(ui, text, 180.0, "Text to insert");
+                            row_changed |= ui
+                                .add(
+                                    egui::DragValue::new(position)
+                                        .range(0..=999)
+                                        .speed(1.0)
+                                        .prefix("at "),
+                                )
+                                .changed();
+                            row_changed |= combo_insert_anchor(ui, anchor);
+                            row_changed
+                        });
+
+                        let RemoveRule {
+                            enabled,
+                            count,
+                            from,
+                        } = remove;
+                        changed |= rule_row(ui, &palette, "Remove", enabled, |ui| {
+                            let mut row_changed = ui
+                                .add(
+                                    egui::DragValue::new(count)
+                                        .range(0..=999)
+                                        .speed(1.0)
+                                        .prefix("chars "),
+                                )
+                                .changed();
+                            row_changed |= combo_remove_from(ui, from);
+                            row_changed
+                        });
+
+                        let SerializeRule {
+                            enabled,
+                            start,
+                            step,
+                            padding,
+                            position,
+                            separator,
+                        } = serialize;
+                        changed |= rule_row(ui, &palette, "Serialize", enabled, |ui| {
+                            let mut row_changed = ui
+                                .add(
+                                    egui::DragValue::new(start)
+                                        .range(-999_999..=999_999)
+                                        .speed(1.0)
+                                        .prefix("start "),
+                                )
+                                .changed();
+                            row_changed |= ui
+                                .add(
+                                    egui::DragValue::new(step)
+                                        .range(-999..=999)
+                                        .speed(1.0)
+                                        .prefix("step "),
+                                )
+                                .changed();
+                            row_changed |= ui
+                                .add(
+                                    egui::DragValue::new(padding)
+                                        .range(0..=12)
+                                        .speed(1.0)
+                                        .prefix("pad "),
+                                )
+                                .changed();
+                            row_changed |= combo_serialize_position(ui, position);
+                            row_changed |= text_edit(ui, separator, 40.0, "");
+                            ui.label(RichText::new("sep").size(12.0).color(palette.secondary))
+                                .on_hover_text("Separator between the name and the number");
+                            row_changed
+                        });
+
+                        let TextRule { enabled, text } = prefix;
+                        changed |= rule_row(ui, &palette, "Prefix", enabled, |ui| {
+                            text_edit(ui, text, 300.0, "Prefix")
+                        });
+
+                        let TextRule { enabled, text } = suffix;
+                        changed |= rule_row(ui, &palette, "Suffix", enabled, |ui| {
+                            text_edit(ui, text, 300.0, "Suffix")
+                        });
+
+                        let ExtensionRule { enabled, value } = extension;
+                        changed |= rule_row(ui, &palette, "Extension", enabled, |ui| {
+                            text_edit(ui, value, 160.0, "e.g. jpg")
+                        });
+
+                        let CaseRule { enabled, mode } = case;
+                        changed |= rule_row(ui, &palette, "Case", enabled, |ui| {
+                            combo_case_mode(ui, mode)
+                        });
+
+                        let SortRule {
+                            enabled,
+                            method,
+                            descending,
+                        } = sort;
+                        changed |= rule_row(ui, &palette, "Sort", enabled, |ui| {
+                            let mut row_changed = combo_sort_method(ui, method);
+                            row_changed |= ui.checkbox(descending, "Descending").changed();
+                            row_changed
+                        });
+                    });
+
+                ui.painter().hline(
+                    panel_rect.x_range(),
+                    panel_rect.bottom() - 0.5,
+                    Stroke::new(1.0, palette.border),
+                );
+            });
+
+        changed
     }
 
     // ---------------------------------------------------------------- table
@@ -401,11 +841,13 @@ impl RenameRxApp {
     fn file_table(&mut self, ui: &mut Ui) {
         let palette = self.palette();
         let modifiers = ui.input(|input| input.modifiers);
-        let mut clicked: Option<(u64, usize)> = None;
+        let mut clicked: Option<(FileId, usize)> = None;
 
         {
             let files = &self.files;
             let selected = &self.selected;
+            let order = &self.preview.order;
+            let previews = &self.preview.previews;
 
             TableBuilder::new(ui)
                 .striped(false)
@@ -437,9 +879,19 @@ impl RenameRxApp {
                     });
                 })
                 .body(|body| {
-                    body.rows(ROW_HEIGHT, files.len(), |mut row| {
-                        let index = row.index();
-                        let file = &files[index];
+                    body.rows(ROW_HEIGHT, order.len(), |mut row| {
+                        let display_index = row.index();
+                        let Some(&file_index) = order.get(display_index) else {
+                            return;
+                        };
+                        let Some(file) = files.get(file_index) else {
+                            return;
+                        };
+
+                        let preview = previews
+                            .get(file_index)
+                            .map(String::as_str)
+                            .unwrap_or(&file.original_name);
                         let is_selected = selected.contains(&file.id);
 
                         row.set_selected(is_selected);
@@ -447,7 +899,7 @@ impl RenameRxApp {
                         row.col(|ui| {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 ui.label(
-                                    RichText::new((index + 1).to_string())
+                                    RichText::new((display_index + 1).to_string())
                                         .size(12.0)
                                         .color(palette.secondary),
                                 );
@@ -469,10 +921,8 @@ impl RenameRxApp {
 
                         row.col(|ui| {
                             ui.add(
-                                egui::Label::new(
-                                    RichText::new(&file.original_name).color(palette.secondary),
-                                )
-                                .truncate(),
+                                egui::Label::new(RichText::new(preview).color(palette.secondary))
+                                    .truncate(),
                             );
                         });
 
@@ -486,15 +936,15 @@ impl RenameRxApp {
 
                         let response = row.response();
                         if response.clicked() {
-                            clicked = Some((file.id, index));
+                            clicked = Some((file.id, display_index));
                         }
                         response.on_hover_text(file.path.display().to_string());
                     });
                 });
         }
 
-        if let Some((id, index)) = clicked {
-            self.select_row(id, index, modifiers);
+        if let Some((id, display_index)) = clicked {
+            self.select_row(id, display_index, modifiers);
         }
     }
 
@@ -541,6 +991,9 @@ impl RenameRxApp {
         let palette = self.palette();
         let file_count = self.files.len();
         let selected_count = self.selected.len();
+        let has_files = file_count > 0;
+        let errors = self.preview.report.errors();
+        let warnings = self.preview.report.warnings();
         let count_text = if file_count == 0 {
             "0 files — No files selected".to_owned()
         } else if selected_count == 0 {
@@ -554,6 +1007,20 @@ impl RenameRxApp {
                 plural(file_count, "file", "files")
             )
         };
+        let rename_hint = if errors > 0 {
+            format!(
+                "{errors} {} block renaming; open Validity to review them",
+                plural(errors, "error", "errors")
+            )
+        } else if warnings > 0 {
+            format!(
+                "{warnings} {} to review before renaming",
+                plural(warnings, "warning", "warnings")
+            )
+        } else {
+            "Rename all files (Ctrl+Enter)".to_owned()
+        };
+        let mut rename_clicked = false;
 
         egui::Panel::bottom("footer")
             .exact_size(theme::FOOTER_HEIGHT)
@@ -582,14 +1049,23 @@ impl RenameRxApp {
                 );
 
                 let rename_rect = Rect::from_center_size(content_rect.center(), vec2(168.0, 32.0));
-                ui.add_enabled_ui(false, |ui| {
+                ui.add_enabled_ui(has_files, |ui| {
                     let response = ui.put(
                         rename_rect,
                         Button::new(RichText::new("Rename").color(palette.on_accent))
                             .fill(palette.accent)
                             .corner_radius(6),
                     );
-                    response.on_disabled_hover_text("The rename engine arrives in Phase 3");
+
+                    if response.clicked() {
+                        rename_clicked = true;
+                    }
+
+                    if has_files {
+                        response.on_hover_text(rename_hint);
+                    } else {
+                        response.on_disabled_hover_text("Add files to rename");
+                    }
                 });
 
                 ui.painter().text(
@@ -600,6 +1076,10 @@ impl RenameRxApp {
                     palette.secondary,
                 );
             });
+
+        if rename_clicked {
+            self.rename_requested = true;
+        }
     }
 
     // ------------------------------------------------------------- dialogs
@@ -633,15 +1113,7 @@ impl RenameRxApp {
                 ui.add_space(6.0);
 
                 ui.scope(|ui| {
-                    // Make radio/checkbox outlines visible: the global button style
-                    // uses a filled background and no border.
-                    let widgets = &mut ui.visuals_mut().widgets;
-                    widgets.inactive.bg_fill = palette.background;
-                    widgets.inactive.bg_stroke = Stroke::new(1.0, palette.border);
-                    widgets.hovered.bg_fill = palette.background;
-                    widgets.hovered.bg_stroke = Stroke::new(1.0, palette.accent);
-                    widgets.active.bg_fill = palette.background;
-                    widgets.active.bg_stroke = Stroke::new(1.0, palette.accent);
+                    style_controls(ui, &palette);
 
                     for option in ThemePreference::ALL {
                         ui.radio_value(&mut preference, option, option.label());
@@ -756,6 +1228,279 @@ impl RenameRxApp {
         self.about_open = open;
     }
 
+    fn validation_modal(&mut self, ctx: &egui::Context) {
+        if !self.validation_open {
+            return;
+        }
+
+        let palette = self.palette();
+        let report = &self.preview.report;
+        let errors = report.errors();
+        let warnings = report.warnings();
+        let infos = report.infos();
+        let mut open = self.validation_open;
+        let mut selected: Option<FileId> = None;
+
+        let modal = egui::Modal::new(egui::Id::unique("validation_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(600.0);
+
+                ui.label(
+                    RichText::new("Validity")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(4.0);
+
+                let summary = if report.issues.is_empty() {
+                    "No issues found".to_owned()
+                } else {
+                    format!(
+                        "{errors} {} · {warnings} {} · {infos} info",
+                        plural(errors, "error", "errors"),
+                        plural(warnings, "warning", "warnings")
+                    )
+                };
+                let summary_color = if errors > 0 {
+                    palette.danger
+                } else if warnings > 0 {
+                    palette.warning
+                } else {
+                    palette.secondary
+                };
+                ui.label(RichText::new(summary).size(13.0).color(summary_color));
+
+                if report.issues.is_empty() {
+                    ui.add_space(24.0);
+                    ui.label(
+                        RichText::new("Everything looks good.")
+                            .size(14.0)
+                            .color(palette.secondary),
+                    );
+                    ui.add_space(24.0);
+                } else {
+                    ui.add_space(12.0);
+
+                    egui::ScrollArea::vertical()
+                        .max_height(330.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+
+                            for issue in &report.issues {
+                                ui.horizontal(|ui| {
+                                    paint_severity_dot(ui, issue.severity, &palette);
+
+                                    if let Some(file_id) = issue.file_id {
+                                        if let Some(file) =
+                                            self.files.iter().find(|file| file.id == file_id)
+                                        {
+                                            let response = ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&file.original_name)
+                                                        .color(palette.accent),
+                                                )
+                                                .sense(Sense::click()),
+                                            );
+                                            if response.clicked() {
+                                                selected = Some(file_id);
+                                            }
+                                        }
+                                    } else {
+                                        ui.label(
+                                            RichText::new("Rule")
+                                                .size(12.0)
+                                                .color(palette.secondary),
+                                        );
+                                    }
+
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&issue.message).color(palette.text),
+                                        )
+                                        .wrap(),
+                                    );
+                                });
+                                ui.add_space(2.0);
+                            }
+                        });
+
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "Errors block renaming. Warnings can be reviewed and accepted.",
+                        )
+                        .size(12.0)
+                        .color(palette.secondary),
+                    );
+                }
+
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Close").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(88.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        if let Some(file_id) = selected {
+            self.select_file_by_id(file_id);
+            open = false;
+        }
+
+        self.validation_open = open;
+    }
+
+    fn confirm_rename_modal(&mut self, ctx: &egui::Context) {
+        if !self.confirm_rename_open {
+            return;
+        }
+
+        let palette = self.palette();
+        let warnings = self.preview.report.warnings();
+        let mut open = self.confirm_rename_open;
+        let mut confirmed = false;
+        let mut review = false;
+
+        let modal = egui::Modal::new(egui::Id::unique("confirm_rename_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(460.0);
+
+                ui.label(
+                    RichText::new("Rename files?")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Validity found {warnings} {} and no errors.",
+                        plural(warnings, "warning", "warnings")
+                    ))
+                    .size(14.0)
+                    .color(palette.warning),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "The names will be applied directly to the files on disk. \
+                         You can undo this operation once afterwards.",
+                    )
+                    .size(13.0)
+                    .color(palette.secondary),
+                );
+
+                ui.add_space(20.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Rename Anyway").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(130.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        confirmed = true;
+                        open = false;
+                    }
+
+                    if ui.button("Cancel").clicked() {
+                        open = false;
+                    }
+
+                    if ui.button("Review Warnings").clicked() {
+                        review = true;
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        self.confirm_rename_open = open;
+
+        if review {
+            self.validation_open = true;
+        }
+
+        if confirmed {
+            self.perform_rename();
+        }
+    }
+
+    fn rename_error_modal(&mut self, ctx: &egui::Context) {
+        let Some(message) = self.rename_error.clone() else {
+            return;
+        };
+
+        let palette = self.palette();
+        let mut open = true;
+
+        let modal = egui::Modal::new(egui::Id::unique("rename_error_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(540.0);
+
+                ui.label(
+                    RichText::new("Operation failed")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.danger),
+                );
+                ui.add_space(10.0);
+                ui.add(
+                    egui::Label::new(RichText::new(&message).size(13.5).color(palette.text)).wrap(),
+                );
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Close").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(88.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        if !open {
+            self.rename_error = None;
+        }
+    }
+
     fn drag_overlay(&self, ctx: &egui::Context) {
         let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
         if !hovering {
@@ -794,13 +1539,41 @@ impl eframe::App for RenameRxApp {
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
 
+        if self.preview.dirty {
+            self.recompute_preview();
+        }
+
         self.header(ui);
+
+        if self.preview.dirty {
+            self.recompute_preview();
+        }
+
         self.footer(ui);
+
+        let rules_changed = self.rules_panel(ui);
+        if rules_changed {
+            self.preview.dirty = true;
+            self.selection_anchor = None;
+        }
+        if self.preview.dirty {
+            self.recompute_preview();
+        }
+
         self.central(ui);
 
+        self.validation_modal(&ctx);
+        self.confirm_rename_modal(&ctx);
+        self.rename_error_modal(&ctx);
         self.settings_modal(&ctx);
         self.about_modal(&ctx);
         self.drag_overlay(&ctx);
+
+        if self.rename_requested {
+            self.rename_requested = false;
+            self.handle_rename_request();
+            ctx.request_repaint();
+        }
 
         if self.add_files_requested {
             self.add_files_requested = false;
@@ -857,6 +1630,179 @@ fn header_label(ui: &mut Ui, text: &str, palette: &Palette) {
             .font(FontId::new(12.5, semibold()))
             .color(palette.secondary),
     );
+}
+
+fn rule_row(
+    ui: &mut Ui,
+    palette: &Palette,
+    name: &str,
+    enabled: &mut bool,
+    controls: impl FnOnce(&mut Ui) -> bool,
+) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            vec2(158.0, 26.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                changed |= ui
+                    .checkbox(enabled, "")
+                    .on_hover_text("Apply this rule")
+                    .changed();
+
+                let text = if *enabled {
+                    RichText::new(name)
+                        .size(13.5)
+                        .color(palette.text)
+                        .font(FontId::new(13.5, semibold()))
+                } else {
+                    RichText::new(name).size(13.5).color(palette.secondary)
+                };
+                ui.label(text);
+            },
+        );
+
+        changed |= controls(ui);
+    });
+
+    changed
+}
+
+fn text_edit(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> bool {
+    ui.add(
+        TextEdit::singleline(value)
+            .hint_text(hint.to_owned())
+            .desired_width(width),
+    )
+    .changed()
+}
+
+fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt("insert_anchor")
+        .selected_text(match *anchor {
+            InsertAnchor::Before => "Before",
+            InsertAnchor::After => "After",
+        })
+        .width(86.0)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(anchor, InsertAnchor::Before, "Before")
+                .changed();
+            changed |= ui
+                .selectable_value(anchor, InsertAnchor::After, "After")
+                .changed();
+        });
+    changed
+}
+
+fn combo_remove_from(ui: &mut Ui, from: &mut RemoveFrom) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt("remove_from")
+        .selected_text(match *from {
+            RemoveFrom::Start => "From start",
+            RemoveFrom::End => "From end",
+        })
+        .width(100.0)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(from, RemoveFrom::Start, "From start")
+                .changed();
+            changed |= ui
+                .selectable_value(from, RemoveFrom::End, "From end")
+                .changed();
+        });
+    changed
+}
+
+fn combo_serialize_position(ui: &mut Ui, position: &mut SerializePosition) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt("serialize_position")
+        .selected_text(match *position {
+            SerializePosition::Prefix => "Prefix",
+            SerializePosition::Suffix => "Suffix",
+        })
+        .width(84.0)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(position, SerializePosition::Prefix, "Prefix")
+                .changed();
+            changed |= ui
+                .selectable_value(position, SerializePosition::Suffix, "Suffix")
+                .changed();
+        });
+    changed
+}
+
+fn combo_case_mode(ui: &mut Ui, mode: &mut CaseMode) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt("case_mode")
+        .selected_text(match *mode {
+            CaseMode::Lower => "lowercase",
+            CaseMode::Title => "Title Case",
+            CaseMode::Upper => "UPPERCASE",
+        })
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(mode, CaseMode::Lower, "lowercase")
+                .changed();
+            changed |= ui
+                .selectable_value(mode, CaseMode::Title, "Title Case")
+                .changed();
+            changed |= ui
+                .selectable_value(mode, CaseMode::Upper, "UPPERCASE")
+                .changed();
+        });
+    changed
+}
+
+fn combo_sort_method(ui: &mut Ui, method: &mut SortMethod) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt("sort_method")
+        .selected_text(match *method {
+            SortMethod::Original => "Original order",
+            SortMethod::Name => "Name",
+            SortMethod::Created => "Created",
+            SortMethod::Modified => "Modified",
+        })
+        .width(120.0)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(method, SortMethod::Original, "Original order")
+                .changed();
+            changed |= ui
+                .selectable_value(method, SortMethod::Name, "Name")
+                .changed();
+            changed |= ui
+                .selectable_value(method, SortMethod::Created, "Created")
+                .changed();
+            changed |= ui
+                .selectable_value(method, SortMethod::Modified, "Modified")
+                .changed();
+        });
+    changed
+}
+
+fn style_controls(ui: &mut Ui, palette: &Palette) {
+    let widgets = &mut ui.visuals_mut().widgets;
+    widgets.inactive.bg_fill = palette.background;
+    widgets.inactive.bg_stroke = Stroke::new(1.0, palette.border);
+    widgets.hovered.bg_fill = palette.background;
+    widgets.hovered.bg_stroke = Stroke::new(1.0, palette.accent);
+    widgets.active.bg_fill = palette.background;
+    widgets.active.bg_stroke = Stroke::new(1.0, palette.accent);
+}
+
+fn paint_severity_dot(ui: &mut Ui, severity: Severity, palette: &Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 18.0), Sense::hover());
+    let color = match severity {
+        Severity::Error => palette.danger,
+        Severity::Warning => palette.warning,
+        Severity::Info => palette.secondary,
+    };
+    ui.painter().circle_filled(rect.center(), 4.0, color);
 }
 
 fn paint_type_cell(ui: &mut Ui, extension: &str, palette: &Palette) {

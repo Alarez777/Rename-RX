@@ -11,4 +11,6 @@ name = "rename_rx_core"
 path = "src/lib.rs"
 
 [dependencies]
+regex.workspace = true
 serde.workspace = true
+unicode-segmentation.workspace = true
