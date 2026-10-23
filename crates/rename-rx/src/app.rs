@@ -23,6 +23,14 @@ use crate::theme::{self, Palette, semibold};
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
 
+#[derive(Clone, Copy)]
+struct RuleColumns {
+    name: f32,
+    controls: f32,
+    settings: f32,
+    gap: f32,
+}
+
 #[derive(Default)]
 struct PreviewCache {
     order: Vec<usize>,
@@ -36,6 +44,31 @@ impl PreviewCache {
         Self {
             dirty: true,
             ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuleSettings {
+    Replace,
+    Regex,
+    Serialize,
+}
+
+impl RuleSettings {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Replace => "Replace Options",
+            Self::Regex => "Regular Expression Options",
+            Self::Serialize => "Serialize Options",
+        }
+    }
+
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::Replace => "Replace options",
+            Self::Regex => "Regular expression options",
+            Self::Serialize => "Serialize options",
         }
     }
 }
@@ -63,6 +96,7 @@ pub struct RenameRxApp {
     settings_open: bool,
     about_open: bool,
     validation_open: bool,
+    rule_settings: Option<RuleSettings>,
 }
 
 impl RenameRxApp {
@@ -101,6 +135,7 @@ impl RenameRxApp {
             settings_open: false,
             about_open: false,
             validation_open: false,
+            rule_settings: None,
         };
 
         app.add_paths(initial_paths);
@@ -421,6 +456,7 @@ impl RenameRxApp {
         if self.settings_open
             || self.about_open
             || self.validation_open
+            || self.rule_settings.is_some()
             || self.confirm_rename_open
             || self.rename_error.is_some()
             || egui::Popup::is_any_open(ctx)
@@ -625,6 +661,7 @@ impl RenameRxApp {
         let default_height = (content_height * 0.49).clamp(180.0, 440.0);
         let max_height = (content_height * 0.68).max(200.0);
         let mut changed = false;
+        let mut open_settings = self.rule_settings;
 
         egui::Panel::top("rules_panel")
             .resizable(true)
@@ -645,11 +682,8 @@ impl RenameRxApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         style_controls(ui, &palette);
+                        ui.spacing_mut().item_spacing.y = 3.0;
 
-                        // The first column is exactly wide enough for the
-                        // longest rule name. The second column starts at the
-                        // same x for every row. The third (buttons) column
-                        // from the original design is not used yet.
                         let name_width = ui
                             .painter()
                             .layout_no_wrap(
@@ -659,153 +693,249 @@ impl RenameRxApp {
                             )
                             .size()
                             .x;
-                        let first_column =
-                            (ui.spacing().icon_width + ui.spacing().icon_spacing + name_width)
-                                .ceil();
+                        let gap = 12.0;
+                        let name_column = (ui.spacing().icon_width
+                            + ui.spacing().icon_spacing
+                            + name_width
+                            + 4.0)
+                            .ceil();
+                        let settings_column = 40.0;
+                        let available = ui.available_width();
+                        let controls_column =
+                            (available - name_column - settings_column - 2.0 * gap).max(120.0);
+                        let columns = RuleColumns {
+                            name: name_column,
+                            controls: controls_column,
+                            settings: settings_column,
+                            gap,
+                        };
 
-                        egui::Grid::new("rules_grid")
-                            .num_columns(2)
-                            .min_col_width(first_column)
-                            .spacing(vec2(16.0, 3.0))
-                            .show(ui, |ui| {
-                                let RuleSet {
-                                    new_name,
-                                    replace,
-                                    regex,
-                                    insert,
-                                    remove,
-                                    serialize,
-                                    prefix,
-                                    suffix,
-                                    extension,
-                                    case,
-                                    sort,
-                                } = &mut self.rules;
+                        let RuleSet {
+                            new_name,
+                            replace,
+                            regex,
+                            insert,
+                            remove,
+                            serialize,
+                            prefix,
+                            suffix,
+                            extension,
+                            case,
+                            sort,
+                        } = &mut self.rules;
 
-                                let NewNameRule { enabled, value } = new_name;
-                                changed |= rule_row(ui, &palette, "New Name", enabled, |ui| {
-                                    text_edit(ui, value, 360.0, "New base name")
-                                });
+                        let NewNameRule { enabled, value } = new_name;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "New Name",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| text_edit_fill(ui, value, "New base name"),
+                        );
 
-                                let ReplaceRule {
-                                    enabled,
-                                    find,
-                                    replace,
-                                    case_sensitive,
-                                    whole_word,
-                                } = replace;
-                                changed |= rule_row(ui, &palette, "Replace", enabled, |ui| {
-                                    let mut row_changed = text_edit(ui, find, 150.0, "Find");
-                                    row_changed |= text_edit(ui, replace, 150.0, "Replace");
-                                    row_changed |= ui
-                                        .checkbox(case_sensitive, "Aa")
-                                        .on_hover_text("Case sensitive")
-                                        .changed();
-                                    row_changed |= ui
-                                        .checkbox(whole_word, "Word")
-                                        .on_hover_text("Whole word")
-                                        .changed();
-                                    row_changed
-                                });
-
-                                let RegexRule {
-                                    enabled,
-                                    pattern,
-                                    replacement,
-                                    case_insensitive,
-                                } = regex;
-                                changed |=
-                                    rule_row(ui, &palette, "Regular Expression", enabled, |ui| {
-                                        let mut row_changed =
-                                            text_edit(ui, pattern, 200.0, "Pattern");
-                                        row_changed |=
-                                            text_edit(ui, replacement, 170.0, "Replacement");
-                                        row_changed |= ui
-                                            .checkbox(case_insensitive, "i")
-                                            .on_hover_text("Ignore case")
-                                            .changed();
-                                        row_changed
-                                    });
-
-                                let InsertRule {
-                                    enabled,
-                                    text,
-                                    position,
-                                    anchor,
-                                } = insert;
-                                changed |= rule_row(ui, &palette, "Insert", enabled, |ui| {
+                        let ReplaceRule {
+                            enabled,
+                            find,
+                            replace,
+                            case_sensitive: _,
+                            whole_word: _,
+                        } = replace;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Replace",
+                            enabled,
+                            Some(RuleSettings::Replace),
+                            &mut open_settings,
+                            |ui| {
+                                ui.columns(2, |columns| {
                                     let mut row_changed =
-                                        text_edit(ui, text, 180.0, "Text to insert");
-                                    row_changed |= spinbox_u32(ui, position, 0..=999, 90.0, "at ");
-                                    row_changed |= combo_insert_anchor(ui, anchor);
+                                        text_edit_fill(&mut columns[0], find, "Find");
+                                    row_changed |=
+                                        text_edit_fill(&mut columns[1], replace, "Replace");
                                     row_changed
-                                });
+                                })
+                            },
+                        );
 
-                                let RemoveRule {
-                                    enabled,
-                                    count,
-                                    from,
-                                } = remove;
-                                changed |= rule_row(ui, &palette, "Remove", enabled, |ui| {
+                        let RegexRule {
+                            enabled,
+                            pattern,
+                            replacement,
+                            case_insensitive: _,
+                        } = regex;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Regular Expression",
+                            enabled,
+                            Some(RuleSettings::Regex),
+                            &mut open_settings,
+                            |ui| {
+                                ui.columns(2, |columns| {
                                     let mut row_changed =
-                                        spinbox_u32(ui, count, 0..=999, 96.0, "chars ");
-                                    row_changed |= combo_remove_from(ui, from);
+                                        text_edit_fill(&mut columns[0], pattern, "Pattern");
+                                    row_changed |=
+                                        text_edit_fill(&mut columns[1], replacement, "Replacement");
                                     row_changed
-                                });
+                                })
+                            },
+                        );
 
-                                let SerializeRule {
-                                    enabled,
+                        let InsertRule {
+                            enabled,
+                            text,
+                            position,
+                            anchor,
+                        } = insert;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Insert",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| {
+                                let text_width = (ui.available_width() - 200.0).max(120.0);
+                                let mut row_changed =
+                                    text_edit_width(ui, text, text_width, "Text to insert");
+                                row_changed |=
+                                    labeled_spinbox_u32(ui, "At", position, 0..=999, 56.0);
+                                row_changed |= combo_insert_anchor(ui, anchor);
+                                row_changed
+                            },
+                        );
+
+                        let RemoveRule {
+                            enabled,
+                            count,
+                            from,
+                        } = remove;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Remove",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| {
+                                let mut row_changed =
+                                    labeled_spinbox_u32(ui, "Characters", count, 0..=999, 56.0);
+                                row_changed |= combo_remove_from(ui, from);
+                                row_changed
+                            },
+                        );
+
+                        let SerializeRule {
+                            enabled,
+                            start,
+                            step: _,
+                            padding,
+                            position,
+                            separator: _,
+                        } = serialize;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Serialize",
+                            enabled,
+                            Some(RuleSettings::Serialize),
+                            &mut open_settings,
+                            |ui| {
+                                let mut row_changed = labeled_spinbox_i64(
+                                    ui,
+                                    "Start",
                                     start,
-                                    step,
-                                    padding,
-                                    position,
-                                    separator,
-                                } = serialize;
-                                changed |= rule_row(ui, &palette, "Serialize", enabled, |ui| {
-                                    let mut row_changed =
-                                        spinbox_i64(ui, start, -999_999..=999_999, 96.0, "start ");
-                                    row_changed |= spinbox_i64(ui, step, -999..=999, 86.0, "step ");
-                                    row_changed |= spinbox_u32(ui, padding, 0..=12, 76.0, "pad ");
-                                    row_changed |= combo_serialize_position(ui, position);
-                                    row_changed |= text_edit(ui, separator, 40.0, "");
-                                    ui.label(
-                                        RichText::new("sep").size(12.0).color(palette.secondary),
-                                    )
-                                    .on_hover_text("Separator between the name and the number");
-                                    row_changed
-                                });
+                                    -999_999..=999_999,
+                                    64.0,
+                                );
+                                row_changed |=
+                                    labeled_spinbox_u32(ui, "Padding", padding, 0..=12, 48.0);
+                                ui.label(
+                                    RichText::new("Position")
+                                        .size(12.5)
+                                        .color(ui.visuals().weak_text_color()),
+                                );
+                                row_changed |= combo_serialize_position(ui, position);
+                                row_changed
+                            },
+                        );
 
-                                let TextRule { enabled, text } = prefix;
-                                changed |= rule_row(ui, &palette, "Prefix", enabled, |ui| {
-                                    text_edit(ui, text, 300.0, "Prefix")
-                                });
+                        let TextRule { enabled, text } = prefix;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Prefix",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| text_edit_fill(ui, text, "Prefix"),
+                        );
 
-                                let TextRule { enabled, text } = suffix;
-                                changed |= rule_row(ui, &palette, "Suffix", enabled, |ui| {
-                                    text_edit(ui, text, 300.0, "Suffix")
-                                });
+                        let TextRule { enabled, text } = suffix;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Suffix",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| text_edit_fill(ui, text, "Suffix"),
+                        );
 
-                                let ExtensionRule { enabled, value } = extension;
-                                changed |= rule_row(ui, &palette, "Extension", enabled, |ui| {
-                                    text_edit(ui, value, 160.0, "e.g. jpg")
-                                });
+                        let ExtensionRule { enabled, value } = extension;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Extension",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| text_edit_fill(ui, value, "e.g. jpg"),
+                        );
 
-                                let CaseRule { enabled, mode } = case;
-                                changed |= rule_row(ui, &palette, "Case", enabled, |ui| {
-                                    combo_case_mode(ui, mode)
-                                });
+                        let CaseRule { enabled, mode } = case;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Case",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| combo_case_mode(ui, mode),
+                        );
 
-                                let SortRule {
-                                    enabled,
-                                    method,
-                                    descending,
-                                } = sort;
-                                changed |= rule_row(ui, &palette, "Sort", enabled, |ui| {
-                                    let mut row_changed = combo_sort_method(ui, method);
-                                    row_changed |= ui.checkbox(descending, "Descending").changed();
-                                    row_changed
-                                });
-                            });
+                        let SortRule {
+                            enabled,
+                            method,
+                            descending,
+                        } = sort;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Sort",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| {
+                                let mut row_changed = combo_sort_method(ui, method);
+                                row_changed |= ui.checkbox(descending, "Descending").changed();
+                                row_changed
+                            },
+                        );
                     });
 
                 ui.painter().hline(
@@ -815,6 +945,7 @@ impl RenameRxApp {
                 );
             });
 
+        self.rule_settings = open_settings;
         changed
     }
 
@@ -1389,6 +1520,116 @@ impl RenameRxApp {
         self.validation_open = open;
     }
 
+    fn rule_settings_modal(&mut self, ctx: &egui::Context) {
+        let Some(kind) = self.rule_settings else {
+            return;
+        };
+
+        let palette = self.palette();
+        let mut open = true;
+        let mut changed = false;
+
+        let modal = egui::Modal::new(egui::Id::unique("rule_settings_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(420.0);
+
+                ui.label(
+                    RichText::new(kind.title())
+                        .font(FontId::new(20.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(6.0);
+
+                let description = match kind {
+                    RuleSettings::Replace => "These options apply to the Find and Replace fields.",
+                    RuleSettings::Regex => "These options apply to the regular expression.",
+                    RuleSettings::Serialize => {
+                        "Step and separator. Start, Padding and Position stay in the rule row."
+                    }
+                };
+                ui.label(
+                    RichText::new(description)
+                        .size(12.5)
+                        .color(palette.secondary),
+                );
+
+                ui.add_space(14.0);
+
+                ui.scope(|ui| {
+                    style_controls(ui, &palette);
+
+                    match kind {
+                        RuleSettings::Replace => {
+                            changed |= ui
+                                .checkbox(&mut self.rules.replace.case_sensitive, "Case sensitive")
+                                .changed();
+                            changed |= ui
+                                .checkbox(&mut self.rules.replace.whole_word, "Whole word")
+                                .changed();
+                        }
+                        RuleSettings::Regex => {
+                            changed |= ui
+                                .checkbox(&mut self.rules.regex.case_insensitive, "Ignore case")
+                                .changed();
+                        }
+                        RuleSettings::Serialize => {
+                            changed |= labeled_spinbox_i64(
+                                ui,
+                                "Step",
+                                &mut self.rules.serialize.step,
+                                -999..=999,
+                                64.0,
+                            );
+
+                            ui.add_space(10.0);
+                            ui.label(
+                                RichText::new("Separator")
+                                    .size(12.5)
+                                    .color(palette.secondary),
+                            );
+                            changed |= text_edit_fill(
+                                ui,
+                                &mut self.rules.serialize.separator,
+                                "Separator",
+                            );
+                        }
+                    }
+                });
+
+                ui.add_space(20.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Done").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(88.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        if !open {
+            self.rule_settings = None;
+        }
+
+        if changed {
+            self.preview.dirty = true;
+            ctx.request_repaint();
+        }
+    }
+
     fn confirm_rename_modal(&mut self, ctx: &egui::Context) {
         if !self.confirm_rename_open {
             return;
@@ -1585,6 +1826,7 @@ impl eframe::App for RenameRxApp {
         self.central(ui);
 
         self.validation_modal(&ctx);
+        self.rule_settings_modal(&ctx);
         self.confirm_rename_modal(&ctx);
         self.rename_error_modal(&ctx);
         self.settings_modal(&ctx);
@@ -1654,41 +1896,78 @@ fn header_label(ui: &mut Ui, text: &str, palette: &Palette) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rule_row(
     ui: &mut Ui,
     palette: &Palette,
+    columns: RuleColumns,
     name: &str,
     enabled: &mut bool,
+    settings: Option<RuleSettings>,
+    open_settings: &mut Option<RuleSettings>,
     controls: impl FnOnce(&mut Ui) -> bool,
 ) -> bool {
     let mut changed = false;
 
     ui.horizontal(|ui| {
-        changed |= ui
-            .checkbox(enabled, "")
-            .on_hover_text("Apply this rule")
-            .changed();
+        ui.spacing_mut().item_spacing.x = columns.gap;
 
-        let text = if *enabled {
-            RichText::new(name)
-                .size(13.5)
-                .color(palette.text)
-                .font(FontId::new(13.5, semibold()))
-        } else {
-            RichText::new(name).size(13.5).color(palette.secondary)
-        };
-        ui.label(text);
+        ui.allocate_ui_with_layout(
+            vec2(columns.name, 28.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.set_width(columns.name);
+
+                changed |= ui
+                    .checkbox(enabled, "")
+                    .on_hover_text("Apply this rule")
+                    .changed();
+
+                let text = if *enabled {
+                    RichText::new(name)
+                        .size(13.5)
+                        .color(palette.text)
+                        .font(FontId::new(13.5, semibold()))
+                } else {
+                    RichText::new(name).size(13.5).color(palette.secondary)
+                };
+                ui.label(text);
+            },
+        );
+
+        ui.allocate_ui_with_layout(
+            vec2(columns.controls, 28.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.set_width(columns.controls);
+                changed |= controls(ui);
+            },
+        );
+
+        ui.allocate_ui_with_layout(
+            vec2(columns.settings, 28.0),
+            Layout::right_to_left(Align::Center),
+            |ui| {
+                ui.set_width(columns.settings);
+
+                if let Some(kind) = settings
+                    && settings_button(ui, palette, kind)
+                {
+                    *open_settings = Some(kind);
+                }
+            },
+        );
     });
 
-    ui.horizontal(|ui| {
-        changed |= controls(ui);
-    });
-
-    ui.end_row();
     changed
 }
 
-fn text_edit(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> bool {
+fn text_edit_fill(ui: &mut Ui, value: &mut String, hint: &str) -> bool {
+    let width = ui.available_width().max(60.0);
+    text_edit_width(ui, value, width, hint)
+}
+
+fn text_edit_width(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> bool {
     ui.add(
         TextEdit::singleline(value)
             .hint_text(hint.to_owned())
@@ -1697,13 +1976,51 @@ fn text_edit(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> bool {
     .changed()
 }
 
-fn spinbox_i64(
+fn labeled_spinbox_i64(
     ui: &mut Ui,
+    label: &str,
     value: &mut i64,
     range: RangeInclusive<i64>,
     width: f32,
-    prefix: &str,
 ) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            RichText::new(label)
+                .size(12.5)
+                .color(ui.visuals().weak_text_color()),
+        );
+        changed |= spinbox_i64(ui, value, range, width);
+    });
+
+    changed
+}
+
+fn labeled_spinbox_u32(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut u32,
+    range: RangeInclusive<u32>,
+    width: f32,
+) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            RichText::new(label)
+                .size(12.5)
+                .color(ui.visuals().weak_text_color()),
+        );
+        changed |= spinbox_u32(ui, value, range, width);
+    });
+
+    changed
+}
+
+fn spinbox_i64(ui: &mut Ui, value: &mut i64, range: RangeInclusive<i64>, width: f32) -> bool {
     let mut changed = false;
     let (min, max) = (*range.start(), *range.end());
 
@@ -1715,7 +2032,6 @@ fn spinbox_i64(
                 egui::DragValue::new(value)
                     .range(range)
                     .speed(1.0)
-                    .prefix(prefix)
                     .min_size(vec2(width, 28.0)),
             )
             .changed();
@@ -1737,13 +2053,7 @@ fn spinbox_i64(
     changed
 }
 
-fn spinbox_u32(
-    ui: &mut Ui,
-    value: &mut u32,
-    range: RangeInclusive<u32>,
-    width: f32,
-    prefix: &str,
-) -> bool {
+fn spinbox_u32(ui: &mut Ui, value: &mut u32, range: RangeInclusive<u32>, width: f32) -> bool {
     let mut changed = false;
     let (min, max) = (*range.start(), *range.end());
 
@@ -1755,7 +2065,6 @@ fn spinbox_u32(
                 egui::DragValue::new(value)
                     .range(range)
                     .speed(1.0)
-                    .prefix(prefix)
                     .min_size(vec2(width, 28.0)),
             )
             .changed();
@@ -1806,6 +2115,46 @@ fn spin_arrow(ui: &mut Ui, up: bool) -> bool {
         .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
 
     response.clicked()
+}
+
+fn settings_button(ui: &mut Ui, palette: &Palette, kind: RuleSettings) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), palette.button_hover);
+    } else if response.is_pointer_button_down_on() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), palette.button_active);
+    }
+
+    let color = if response.hovered() {
+        palette.accent
+    } else {
+        palette.secondary
+    };
+    paint_gear(ui.painter(), rect.center(), color);
+
+    let clicked = response.clicked();
+    response.on_hover_text(kind.tooltip());
+    clicked
+}
+
+fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
+    painter.circle_stroke(center, 6.0, Stroke::new(1.5, color));
+    painter.circle_filled(center, 2.2, color);
+
+    for index in 0..8 {
+        let angle = std::f32::consts::TAU * index as f32 / 8.0;
+        let (sin, cos) = angle.sin_cos();
+        painter.line_segment(
+            [
+                pos2(center.x + cos * 6.0, center.y + sin * 6.0),
+                pos2(center.x + cos * 9.0, center.y + sin * 9.0),
+            ],
+            Stroke::new(1.6, color),
+        );
+    }
 }
 
 fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
