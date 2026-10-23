@@ -1,0 +1,20 @@
+[package]
+name = "rename-rx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native batch file renamer for Linux"
+
+[[bin]]
+name = "rename-rx"
+path = "src/main.rs"
+
+[dependencies]
+dark-light.workspace = true
+eframe.workspace = true
+egui.workspace = true
+rename-rx-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
