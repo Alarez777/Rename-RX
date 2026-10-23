@@ -12,9 +12,12 @@ name = "rename-rx"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 dark-light.workspace = true
 eframe.workspace = true
 egui.workspace = true
+egui_extras.workspace = true
 rename-rx-core.workspace = true
+rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true

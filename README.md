@@ -5,8 +5,8 @@ Rename RX is a native batch file renamer for Linux, written in Rust with
 It is a reimplementation of the macOS app **Rename X**, with an Adwaita-style
 interface that follows the system light/dark preference.
 
-> Status: Phase 0 — application shell. File selection and the rename engine
-> land in the next milestones.
+> Status: Phase 1 — file selection and the file table. The rule engine and
+> transactional rename land in the next milestones.
 
 ## Requirements
 
@@ -17,20 +17,25 @@ interface that follows the system light/dark preference.
 
 ```sh
 cargo run -p rename-rx
+cargo run -p rename-rx -- path/to/file1 path/to/file2
 ```
+
+You can also drag files onto the window or press `Ctrl+O`. Select rows with a
+click, `Ctrl`/`Cmd`+click, or `Shift`+click. `Delete` removes the selected
+entries and `Ctrl+A` selects all of them.
 
 ## Workspace
 
 | Crate | Purpose |
 | --- | --- |
-| `crates/rename-rx` | egui/eframe application, Adwaita theme, dialogs |
-| `crates/rename-rx-core` | UI-independent rename engine, validation, transactions |
+| `crates/rename-rx` | egui/eframe application, Adwaita theme, dialogs, file table |
+| `crates/rename-rx-core` | UI-independent file model, rename engine, validation |
 
 ## Roadmap
 
 - [x] Phase 0 — window shell, Adwaita light/dark theme, system theme detection,
       Settings and About dialogs
-- [ ] Phase 1 — Add Files, drag and drop, file table
+- [x] Phase 1 — Add Files, drag and drop, file table, selection, keyboard shortcuts
 - [ ] Phase 2 — rule engine, live preview, validity report
 - [ ] Phase 3 — transactional rename with undo
 - [ ] Phase 4 — per-rule settings, date/time rules

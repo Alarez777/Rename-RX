@@ -2,9 +2,13 @@ mod app;
 mod settings;
 mod theme;
 
+use std::path::PathBuf;
+
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    let initial_paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([980.0, 760.0])
@@ -17,6 +21,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Rename RX",
         options,
-        Box::new(|cc| Ok(Box::new(app::RenameRxApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::RenameRxApp::new(cc, initial_paths)))),
     )
 }

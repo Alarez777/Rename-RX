@@ -10,6 +10,7 @@ authors = ["Alarez777"]
 repository = "https://github.com/Alarez777/rename-rx"
 
 [workspace.dependencies]
+chrono = "0.4"
 dark-light = "3.0"
 eframe = { version = "0.37", default-features = false, features = [
     "accesskit",
@@ -22,6 +23,8 @@ eframe = { version = "0.37", default-features = false, features = [
     "x11",
 ] }
 egui = "0.37"
+egui_extras = "0.37"
 rename-rx-core = { path = "crates/rename-rx-core" }
+rfd = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
