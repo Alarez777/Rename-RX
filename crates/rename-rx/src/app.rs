@@ -788,13 +788,15 @@ impl RenameRxApp {
                             None,
                             &mut open_settings,
                             |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed = spinbox_u32(ui, position, 0..=999, 56.0);
-                                    row_changed |= combo_insert_anchor(ui, anchor);
-                                    row_changed |= text_edit_fill(ui, text, "Text to insert");
-                                    row_changed
-                                })
-                                .inner
+                                let gap = ui.spacing().item_spacing.x;
+                                let text_width =
+                                    (ui.available_width() - 86.0 - 72.0 - 2.0 * gap).max(80.0);
+
+                                let mut row_changed =
+                                    text_edit_width(ui, text, text_width, "Text to insert");
+                                row_changed |= combo_insert_anchor(ui, anchor);
+                                row_changed |= spinbox_u32(ui, position, 0..=999, 56.0);
+                                row_changed
                             },
                         );
 
@@ -2069,11 +2071,9 @@ fn spinbox_i64(ui: &mut Ui, value: &mut i64, range: RangeInclusive<i64>, width: 
             ui.spacing_mut().item_spacing.x = 0.0;
 
             changed |= ui
-                .add(
-                    egui::DragValue::new(value)
-                        .range(range)
-                        .speed(1.0)
-                        .min_size(vec2(width, 28.0)),
+                .add_sized(
+                    vec2(width, 28.0),
+                    egui::DragValue::new(value).range(range).speed(1.0),
                 )
                 .changed();
 
@@ -2107,11 +2107,9 @@ fn spinbox_u32(ui: &mut Ui, value: &mut u32, range: RangeInclusive<u32>, width: 
             ui.spacing_mut().item_spacing.x = 0.0;
 
             changed |= ui
-                .add(
-                    egui::DragValue::new(value)
-                        .range(range)
-                        .speed(1.0)
-                        .min_size(vec2(width, 28.0)),
+                .add_sized(
+                    vec2(width, 28.0),
+                    egui::DragValue::new(value).range(range).speed(1.0),
                 )
                 .changed();
 
