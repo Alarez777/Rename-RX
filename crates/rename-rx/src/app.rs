@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -644,172 +645,167 @@ impl RenameRxApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         style_controls(ui, &palette);
-                        ui.spacing_mut().item_spacing.y = 3.0;
 
-                        let RuleSet {
-                            new_name,
-                            replace,
-                            regex,
-                            insert,
-                            remove,
-                            serialize,
-                            prefix,
-                            suffix,
-                            extension,
-                            case,
-                            sort,
-                        } = &mut self.rules;
+                        // The first column is exactly wide enough for the
+                        // longest rule name. The second column starts at the
+                        // same x for every row. The third (buttons) column
+                        // from the original design is not used yet.
+                        let name_width = ui
+                            .painter()
+                            .layout_no_wrap(
+                                "Regular Expression".to_owned(),
+                                FontId::new(13.5, semibold()),
+                                palette.text,
+                            )
+                            .size()
+                            .x;
+                        let first_column =
+                            (ui.spacing().icon_width + ui.spacing().icon_spacing + name_width)
+                                .ceil();
 
-                        let NewNameRule { enabled, value } = new_name;
-                        changed |= rule_row(ui, &palette, "New Name", enabled, |ui| {
-                            text_edit(ui, value, 360.0, "New base name")
-                        });
+                        egui::Grid::new("rules_grid")
+                            .num_columns(2)
+                            .min_col_width(first_column)
+                            .spacing(vec2(16.0, 3.0))
+                            .show(ui, |ui| {
+                                let RuleSet {
+                                    new_name,
+                                    replace,
+                                    regex,
+                                    insert,
+                                    remove,
+                                    serialize,
+                                    prefix,
+                                    suffix,
+                                    extension,
+                                    case,
+                                    sort,
+                                } = &mut self.rules;
 
-                        let ReplaceRule {
-                            enabled,
-                            find,
-                            replace,
-                            case_sensitive,
-                            whole_word,
-                        } = replace;
-                        changed |= rule_row(ui, &palette, "Replace", enabled, |ui| {
-                            let mut row_changed = text_edit(ui, find, 150.0, "Find");
-                            row_changed |= text_edit(ui, replace, 150.0, "Replace");
-                            row_changed |= ui
-                                .checkbox(case_sensitive, "Aa")
-                                .on_hover_text("Case sensitive")
-                                .changed();
-                            row_changed |= ui
-                                .checkbox(whole_word, "Word")
-                                .on_hover_text("Whole word")
-                                .changed();
-                            row_changed
-                        });
+                                let NewNameRule { enabled, value } = new_name;
+                                changed |= rule_row(ui, &palette, "New Name", enabled, |ui| {
+                                    text_edit(ui, value, 360.0, "New base name")
+                                });
 
-                        let RegexRule {
-                            enabled,
-                            pattern,
-                            replacement,
-                            case_insensitive,
-                        } = regex;
-                        changed |= rule_row(ui, &palette, "Regular Expression", enabled, |ui| {
-                            let mut row_changed = text_edit(ui, pattern, 200.0, "Pattern");
-                            row_changed |= text_edit(ui, replacement, 170.0, "Replacement");
-                            row_changed |= ui
-                                .checkbox(case_insensitive, "i")
-                                .on_hover_text("Ignore case")
-                                .changed();
-                            row_changed
-                        });
+                                let ReplaceRule {
+                                    enabled,
+                                    find,
+                                    replace,
+                                    case_sensitive,
+                                    whole_word,
+                                } = replace;
+                                changed |= rule_row(ui, &palette, "Replace", enabled, |ui| {
+                                    let mut row_changed = text_edit(ui, find, 150.0, "Find");
+                                    row_changed |= text_edit(ui, replace, 150.0, "Replace");
+                                    row_changed |= ui
+                                        .checkbox(case_sensitive, "Aa")
+                                        .on_hover_text("Case sensitive")
+                                        .changed();
+                                    row_changed |= ui
+                                        .checkbox(whole_word, "Word")
+                                        .on_hover_text("Whole word")
+                                        .changed();
+                                    row_changed
+                                });
 
-                        let InsertRule {
-                            enabled,
-                            text,
-                            position,
-                            anchor,
-                        } = insert;
-                        changed |= rule_row(ui, &palette, "Insert", enabled, |ui| {
-                            let mut row_changed = text_edit(ui, text, 180.0, "Text to insert");
-                            row_changed |= ui
-                                .add(
-                                    egui::DragValue::new(position)
-                                        .range(0..=999)
-                                        .speed(1.0)
-                                        .prefix("at "),
-                                )
-                                .changed();
-                            row_changed |= combo_insert_anchor(ui, anchor);
-                            row_changed
-                        });
+                                let RegexRule {
+                                    enabled,
+                                    pattern,
+                                    replacement,
+                                    case_insensitive,
+                                } = regex;
+                                changed |=
+                                    rule_row(ui, &palette, "Regular Expression", enabled, |ui| {
+                                        let mut row_changed =
+                                            text_edit(ui, pattern, 200.0, "Pattern");
+                                        row_changed |=
+                                            text_edit(ui, replacement, 170.0, "Replacement");
+                                        row_changed |= ui
+                                            .checkbox(case_insensitive, "i")
+                                            .on_hover_text("Ignore case")
+                                            .changed();
+                                        row_changed
+                                    });
 
-                        let RemoveRule {
-                            enabled,
-                            count,
-                            from,
-                        } = remove;
-                        changed |= rule_row(ui, &palette, "Remove", enabled, |ui| {
-                            let mut row_changed = ui
-                                .add(
-                                    egui::DragValue::new(count)
-                                        .range(0..=999)
-                                        .speed(1.0)
-                                        .prefix("chars "),
-                                )
-                                .changed();
-                            row_changed |= combo_remove_from(ui, from);
-                            row_changed
-                        });
+                                let InsertRule {
+                                    enabled,
+                                    text,
+                                    position,
+                                    anchor,
+                                } = insert;
+                                changed |= rule_row(ui, &palette, "Insert", enabled, |ui| {
+                                    let mut row_changed =
+                                        text_edit(ui, text, 180.0, "Text to insert");
+                                    row_changed |= spinbox_u32(ui, position, 0..=999, 90.0, "at ");
+                                    row_changed |= combo_insert_anchor(ui, anchor);
+                                    row_changed
+                                });
 
-                        let SerializeRule {
-                            enabled,
-                            start,
-                            step,
-                            padding,
-                            position,
-                            separator,
-                        } = serialize;
-                        changed |= rule_row(ui, &palette, "Serialize", enabled, |ui| {
-                            let mut row_changed = ui
-                                .add(
-                                    egui::DragValue::new(start)
-                                        .range(-999_999..=999_999)
-                                        .speed(1.0)
-                                        .prefix("start "),
-                                )
-                                .changed();
-                            row_changed |= ui
-                                .add(
-                                    egui::DragValue::new(step)
-                                        .range(-999..=999)
-                                        .speed(1.0)
-                                        .prefix("step "),
-                                )
-                                .changed();
-                            row_changed |= ui
-                                .add(
-                                    egui::DragValue::new(padding)
-                                        .range(0..=12)
-                                        .speed(1.0)
-                                        .prefix("pad "),
-                                )
-                                .changed();
-                            row_changed |= combo_serialize_position(ui, position);
-                            row_changed |= text_edit(ui, separator, 40.0, "");
-                            ui.label(RichText::new("sep").size(12.0).color(palette.secondary))
-                                .on_hover_text("Separator between the name and the number");
-                            row_changed
-                        });
+                                let RemoveRule {
+                                    enabled,
+                                    count,
+                                    from,
+                                } = remove;
+                                changed |= rule_row(ui, &palette, "Remove", enabled, |ui| {
+                                    let mut row_changed =
+                                        spinbox_u32(ui, count, 0..=999, 96.0, "chars ");
+                                    row_changed |= combo_remove_from(ui, from);
+                                    row_changed
+                                });
 
-                        let TextRule { enabled, text } = prefix;
-                        changed |= rule_row(ui, &palette, "Prefix", enabled, |ui| {
-                            text_edit(ui, text, 300.0, "Prefix")
-                        });
+                                let SerializeRule {
+                                    enabled,
+                                    start,
+                                    step,
+                                    padding,
+                                    position,
+                                    separator,
+                                } = serialize;
+                                changed |= rule_row(ui, &palette, "Serialize", enabled, |ui| {
+                                    let mut row_changed =
+                                        spinbox_i64(ui, start, -999_999..=999_999, 96.0, "start ");
+                                    row_changed |= spinbox_i64(ui, step, -999..=999, 86.0, "step ");
+                                    row_changed |= spinbox_u32(ui, padding, 0..=12, 76.0, "pad ");
+                                    row_changed |= combo_serialize_position(ui, position);
+                                    row_changed |= text_edit(ui, separator, 40.0, "");
+                                    ui.label(
+                                        RichText::new("sep").size(12.0).color(palette.secondary),
+                                    )
+                                    .on_hover_text("Separator between the name and the number");
+                                    row_changed
+                                });
 
-                        let TextRule { enabled, text } = suffix;
-                        changed |= rule_row(ui, &palette, "Suffix", enabled, |ui| {
-                            text_edit(ui, text, 300.0, "Suffix")
-                        });
+                                let TextRule { enabled, text } = prefix;
+                                changed |= rule_row(ui, &palette, "Prefix", enabled, |ui| {
+                                    text_edit(ui, text, 300.0, "Prefix")
+                                });
 
-                        let ExtensionRule { enabled, value } = extension;
-                        changed |= rule_row(ui, &palette, "Extension", enabled, |ui| {
-                            text_edit(ui, value, 160.0, "e.g. jpg")
-                        });
+                                let TextRule { enabled, text } = suffix;
+                                changed |= rule_row(ui, &palette, "Suffix", enabled, |ui| {
+                                    text_edit(ui, text, 300.0, "Suffix")
+                                });
 
-                        let CaseRule { enabled, mode } = case;
-                        changed |= rule_row(ui, &palette, "Case", enabled, |ui| {
-                            combo_case_mode(ui, mode)
-                        });
+                                let ExtensionRule { enabled, value } = extension;
+                                changed |= rule_row(ui, &palette, "Extension", enabled, |ui| {
+                                    text_edit(ui, value, 160.0, "e.g. jpg")
+                                });
 
-                        let SortRule {
-                            enabled,
-                            method,
-                            descending,
-                        } = sort;
-                        changed |= rule_row(ui, &palette, "Sort", enabled, |ui| {
-                            let mut row_changed = combo_sort_method(ui, method);
-                            row_changed |= ui.checkbox(descending, "Descending").changed();
-                            row_changed
-                        });
+                                let CaseRule { enabled, mode } = case;
+                                changed |= rule_row(ui, &palette, "Case", enabled, |ui| {
+                                    combo_case_mode(ui, mode)
+                                });
+
+                                let SortRule {
+                                    enabled,
+                                    method,
+                                    descending,
+                                } = sort;
+                                changed |= rule_row(ui, &palette, "Sort", enabled, |ui| {
+                                    let mut row_changed = combo_sort_method(ui, method);
+                                    row_changed |= ui.checkbox(descending, "Descending").changed();
+                                    row_changed
+                                });
+                            });
                     });
 
                 ui.painter().hline(
@@ -1201,6 +1197,32 @@ impl RenameRxApp {
                     "github.com/Alarez777/rename-rx",
                     "https://github.com/Alarez777/rename-rx",
                 );
+
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new("Built with")
+                        .font(FontId::new(12.0, semibold()))
+                        .color(palette.secondary),
+                );
+                ui.add_space(4.0);
+                egui::Grid::new("about_versions")
+                    .num_columns(2)
+                    .spacing(vec2(18.0, 2.0))
+                    .show(ui, |ui| {
+                        for (name, version) in [
+                            ("Rust", env!("RENAME_RX_RUSTC_VERSION")),
+                            ("egui", env!("RENAME_RX_EGUI_VERSION")),
+                            ("eframe", env!("RENAME_RX_EFRAME_VERSION")),
+                            ("egui_extras", env!("RENAME_RX_EGUI_EXTRAS_VERSION")),
+                            ("winit", env!("RENAME_RX_WINIT_VERSION")),
+                            ("glow", env!("RENAME_RX_GLOW_VERSION")),
+                            ("regex", env!("RENAME_RX_REGEX_VERSION")),
+                        ] {
+                            ui.label(RichText::new(name).size(12.0).color(palette.secondary));
+                            ui.label(RichText::new(version).size(12.0).color(palette.text));
+                            ui.end_row();
+                        }
+                    });
 
                 ui.add_space(20.0);
                 ui.separator();
@@ -1642,30 +1664,27 @@ fn rule_row(
     let mut changed = false;
 
     ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(
-            vec2(158.0, 26.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                changed |= ui
-                    .checkbox(enabled, "")
-                    .on_hover_text("Apply this rule")
-                    .changed();
+        changed |= ui
+            .checkbox(enabled, "")
+            .on_hover_text("Apply this rule")
+            .changed();
 
-                let text = if *enabled {
-                    RichText::new(name)
-                        .size(13.5)
-                        .color(palette.text)
-                        .font(FontId::new(13.5, semibold()))
-                } else {
-                    RichText::new(name).size(13.5).color(palette.secondary)
-                };
-                ui.label(text);
-            },
-        );
+        let text = if *enabled {
+            RichText::new(name)
+                .size(13.5)
+                .color(palette.text)
+                .font(FontId::new(13.5, semibold()))
+        } else {
+            RichText::new(name).size(13.5).color(palette.secondary)
+        };
+        ui.label(text);
+    });
 
+    ui.horizontal(|ui| {
         changed |= controls(ui);
     });
 
+    ui.end_row();
     changed
 }
 
@@ -1676,6 +1695,117 @@ fn text_edit(ui: &mut Ui, value: &mut String, width: f32, hint: &str) -> bool {
             .desired_width(width),
     )
     .changed()
+}
+
+fn spinbox_i64(
+    ui: &mut Ui,
+    value: &mut i64,
+    range: RangeInclusive<i64>,
+    width: f32,
+    prefix: &str,
+) -> bool {
+    let mut changed = false;
+    let (min, max) = (*range.start(), *range.end());
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+
+        changed |= ui
+            .add(
+                egui::DragValue::new(value)
+                    .range(range)
+                    .speed(1.0)
+                    .prefix(prefix)
+                    .min_size(vec2(width, 28.0)),
+            )
+            .changed();
+
+        ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            if spin_arrow(ui, true) {
+                *value = (*value + 1).min(max);
+                changed = true;
+            }
+            if spin_arrow(ui, false) {
+                *value = (*value - 1).max(min);
+                changed = true;
+            }
+        });
+    });
+
+    changed
+}
+
+fn spinbox_u32(
+    ui: &mut Ui,
+    value: &mut u32,
+    range: RangeInclusive<u32>,
+    width: f32,
+    prefix: &str,
+) -> bool {
+    let mut changed = false;
+    let (min, max) = (*range.start(), *range.end());
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+
+        changed |= ui
+            .add(
+                egui::DragValue::new(value)
+                    .range(range)
+                    .speed(1.0)
+                    .prefix(prefix)
+                    .min_size(vec2(width, 28.0)),
+            )
+            .changed();
+
+        ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            if spin_arrow(ui, true) {
+                *value = (*value + 1).min(max);
+                changed = true;
+            }
+            if spin_arrow(ui, false) {
+                *value = (*value).saturating_sub(1).max(min);
+                changed = true;
+            }
+        });
+    });
+
+    changed
+}
+
+fn spin_arrow(ui: &mut Ui, up: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(16.0, 14.0), Sense::click());
+
+    if response.hovered() || response.is_pointer_button_down_on() {
+        let visuals = ui.style().interact(&response);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(3), visuals.weak_bg_fill);
+    }
+
+    let color = ui.style().interact(&response).fg_stroke.color;
+    let center = rect.center();
+    let points = if up {
+        vec![
+            pos2(center.x, center.y - 3.0),
+            pos2(center.x - 4.0, center.y + 2.0),
+            pos2(center.x + 4.0, center.y + 2.0),
+        ]
+    } else {
+        vec![
+            pos2(center.x, center.y + 3.0),
+            pos2(center.x - 4.0, center.y - 2.0),
+            pos2(center.x + 4.0, center.y - 2.0),
+        ]
+    };
+
+    ui.painter()
+        .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+
+    response.clicked()
 }
 
 fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
