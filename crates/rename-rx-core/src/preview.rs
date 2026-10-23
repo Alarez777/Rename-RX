@@ -165,7 +165,12 @@ fn validate(
         });
     }
 
-    let source_paths: HashSet<&Path> = files.iter().map(|file| file.path.as_path()).collect();
+    let moving_paths: HashSet<&Path> = files
+        .iter()
+        .enumerate()
+        .filter(|(index, file)| previews[*index] != file.original_name)
+        .map(|(_, file)| file.path.as_path())
+        .collect();
     let mut exact_names: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut folded_names: HashMap<String, Vec<usize>> = HashMap::new();
 
@@ -293,7 +298,7 @@ fn validate(
 
             if target != file.path
                 && std::fs::symlink_metadata(&target).is_ok()
-                && !source_paths.contains(target.as_path())
+                && !moving_paths.contains(target.as_path())
             {
                 push(
                     &mut report,
@@ -607,6 +612,28 @@ mod tests {
                 .issues
                 .iter()
                 .all(|issue| issue.message.contains("case-insensitive"))
+        );
+    }
+
+    #[test]
+    fn rejects_targets_occupied_by_an_unchanged_batch_file() {
+        let temp = TempDir::new();
+        let files = vec![temp.add(0, "a.txt"), temp.add(1, "b.txt")];
+
+        let mut rules = RuleSet::default();
+        rules.replace.enabled = true;
+        rules.replace.find = "a".to_owned();
+        rules.replace.replace = "b".to_owned();
+
+        let result = build_preview(&files, &rules);
+        assert_eq!(result.previews[0], "b.txt");
+        assert_eq!(result.previews[1], "b.txt");
+        assert!(
+            result
+                .report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("already exists"))
         );
     }
 
