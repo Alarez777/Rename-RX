@@ -98,15 +98,7 @@ pub enum InsertAnchor {
 pub struct RemoveRule {
     pub enabled: bool,
     pub count: u32,
-    pub from: RemoveFrom,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RemoveFrom {
-    #[default]
-    Start,
-    End,
+    pub position: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,7 +109,8 @@ pub struct SerializeRule {
     pub step: i64,
     pub padding: u32,
     pub position: SerializePosition,
-    pub separator: String,
+    pub prefix: String,
+    pub suffix: String,
 }
 
 impl Default for SerializeRule {
@@ -127,8 +120,11 @@ impl Default for SerializeRule {
             start: 1,
             step: 1,
             padding: 3,
-            position: SerializePosition::Suffix,
-            separator: " ".to_owned(),
+            position: SerializePosition::After,
+            // A leading space preserves the original `name 001` look;
+            // the space is part of the prefix rather than a separate separator.
+            prefix: " ".to_owned(),
+            suffix: String::new(),
         }
     }
 }
@@ -136,9 +132,9 @@ impl Default for SerializeRule {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializePosition {
-    Prefix,
     #[default]
-    Suffix,
+    After,
+    Before,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -299,7 +295,7 @@ impl<'a> CompiledRules<'a> {
             stem = remove_chars(
                 &stem,
                 self.rules.remove.count as usize,
-                self.rules.remove.from,
+                self.rules.remove.position as usize,
             );
         }
 
@@ -309,7 +305,8 @@ impl<'a> CompiledRules<'a> {
                 self.rules.serialize.start + index as i64 * self.rules.serialize.step,
                 self.rules.serialize.padding,
                 self.rules.serialize.position,
-                &self.rules.serialize.separator,
+                &self.rules.serialize.prefix,
+                &self.rules.serialize.suffix,
             );
         }
 
@@ -366,17 +363,14 @@ fn insert_text(stem: &str, text: &str, position: usize, anchor: InsertAnchor) ->
     result
 }
 
-fn remove_chars(stem: &str, count: usize, from: RemoveFrom) -> String {
+fn remove_chars(stem: &str, count: usize, position: usize) -> String {
     let graphemes: Vec<&str> = stem.graphemes(true).collect();
-    let count = count.min(graphemes.len());
-    let start = match from {
-        RemoveFrom::Start => 0,
-        RemoveFrom::End => graphemes.len() - count,
-    };
+    let start = position.min(graphemes.len());
+    let end = start.saturating_add(count).min(graphemes.len());
 
     let mut result = String::with_capacity(stem.len());
     result.extend(graphemes[..start].iter().copied());
-    result.extend(graphemes[start + count..].iter().copied());
+    result.extend(graphemes[end..].iter().copied());
     result
 }
 
@@ -385,22 +379,25 @@ fn serialize(
     number: i64,
     padding: u32,
     position: SerializePosition,
-    separator: &str,
+    prefix: &str,
+    suffix: &str,
 ) -> String {
     let width = padding as usize;
-    let token = if number < 0 {
+    let digits = if number < 0 {
         format!("-{:0width$}", number.unsigned_abs())
     } else {
         format!("{number:0width$}")
     };
+
+    let token = format!("{prefix}{digits}{suffix}");
 
     if stem.is_empty() {
         return token;
     }
 
     match position {
-        SerializePosition::Prefix => format!("{token}{separator}{stem}"),
-        SerializePosition::Suffix => format!("{stem}{separator}{token}"),
+        SerializePosition::After => format!("{stem}{token}"),
+        SerializePosition::Before => format!("{token}{stem}"),
     }
 }
 
@@ -526,8 +523,21 @@ mod tests {
             insert_text(combined, "!", 1, InsertAnchor::Before),
             "e\u{301}!x"
         );
-        assert_eq!(remove_chars("e\u{301}x", 1, RemoveFrom::Start), "x");
-        assert_eq!(remove_chars("abc", 2, RemoveFrom::End), "a");
+        assert_eq!(remove_chars("e\u{301}x", 1, 0), "x");
+        assert_eq!(remove_chars("abcdef", 2, 1), "adef");
+        assert_eq!(remove_chars("abcdef", 0, 3), "abcdef");
+        assert_eq!(remove_chars("abc", 5, 1), "a");
+        assert_eq!(remove_chars("abc", 2, 99), "abc");
+    }
+
+    #[test]
+    fn remove_rule_starts_at_the_given_position() {
+        let mut rules = RuleSet::default();
+        rules.remove.enabled = true;
+        rules.remove.count = 2;
+        rules.remove.position = 1;
+
+        assert_eq!(apply(&rules, "abcdef.txt", 0), "adef.txt");
     }
 
     #[test]
@@ -550,17 +560,33 @@ mod tests {
     }
 
     #[test]
-    fn serialize_supports_prefix_padding_and_step() {
+    fn serialize_supports_position_padding_and_step() {
         let mut rules = RuleSet::default();
         rules.serialize.enabled = true;
         rules.serialize.padding = 4;
         rules.serialize.start = 10;
         rules.serialize.step = 5;
-        rules.serialize.position = SerializePosition::Prefix;
-        rules.serialize.separator = "-".to_owned();
+        rules.serialize.position = SerializePosition::Before;
+        rules.serialize.prefix.clear();
+        rules.serialize.suffix = "-".to_owned();
 
         assert_eq!(apply(&rules, "a.txt", 0), "0010-a.txt");
         assert_eq!(apply(&rules, "a.txt", 2), "0020-a.txt");
+    }
+
+    #[test]
+    fn serialize_prefix_and_suffix_wrap_only_the_number() {
+        let mut rules = RuleSet::default();
+        rules.serialize.enabled = true;
+        rules.serialize.prefix = " [".to_owned();
+        rules.serialize.suffix = "]".to_owned();
+
+        assert_eq!(apply(&rules, "photo.jpg", 0), "photo [001].jpg");
+
+        rules.serialize.position = SerializePosition::Before;
+        rules.serialize.prefix.clear();
+        rules.serialize.suffix = " ".to_owned();
+        assert_eq!(apply(&rules, "photo.jpg", 0), "001 photo.jpg");
     }
 
     #[test]

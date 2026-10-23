@@ -5,16 +5,16 @@ use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Local};
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, ComboBox, CornerRadius, FontId, Frame, Key, LayerId,
-    Layout, Margin, Modifiers, Order, Rect, RichText, Sense, Shadow, Stroke, StrokeKind, TextEdit,
-    Theme, Ui, pos2, vec2,
+    self, Align, Align2, Button, Color32, ComboBox, CornerRadius, FontFamily, FontId, Frame, Key,
+    LayerId, Layout, Margin, Modifiers, Order, Rect, RichText, Sense, Shadow, Stroke, StrokeKind,
+    TextEdit, Theme, Ui, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use rename_rx_core::{
     CaseMode, CaseRule, ExtensionRule, FileEntry, FileId, InsertAnchor, InsertRule, NewNameRule,
-    RegexRule, RemoveFrom, RemoveRule, RenameOutcome, RenameStep, ReplaceRule, RuleSet,
-    SerializePosition, SerializeRule, Severity, SortMethod, SortRule, TextRule, ValidationReport,
-    build_preview, execute as execute_rename, plan_steps,
+    RegexRule, RemoveRule, RenameOutcome, RenameStep, ReplaceRule, RuleSet, SerializePosition,
+    SerializeRule, Severity, SortMethod, SortRule, TextRule, ValidationReport, build_preview,
+    execute as execute_rename, plan_steps,
 };
 
 use crate::settings::{self, Settings, ThemePreference};
@@ -684,7 +684,16 @@ impl RenameRxApp {
                         style_controls(ui, &palette);
                         ui.spacing_mut().item_spacing.y = 3.0;
 
-                        let name_width = ui
+                        let regular_name_width = ui
+                            .painter()
+                            .layout_no_wrap(
+                                "Regular Expression".to_owned(),
+                                FontId::new(13.5, FontFamily::Proportional),
+                                palette.text,
+                            )
+                            .size()
+                            .x;
+                        let semibold_name_width = ui
                             .painter()
                             .layout_no_wrap(
                                 "Regular Expression".to_owned(),
@@ -693,11 +702,13 @@ impl RenameRxApp {
                             )
                             .size()
                             .x;
-                        let gap = 10.0;
+                        let name_width = regular_name_width.max(semibold_name_width);
+                        let gap = 8.0;
                         let name_column = (ui.spacing().icon_width
                             + ui.spacing().icon_spacing
+                            + ui.spacing().item_spacing.x
                             + name_width
-                            + 4.0)
+                            + 8.0)
                             .ceil();
                         let settings_column = 24.0;
                         let available = ui.available_width();
@@ -803,7 +814,7 @@ impl RenameRxApp {
                         let RemoveRule {
                             enabled,
                             count,
-                            from,
+                            position,
                         } = remove;
                         changed |= rule_row(
                             ui,
@@ -815,7 +826,13 @@ impl RenameRxApp {
                             &mut open_settings,
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed = combo_remove_from(ui, from);
+                                    let mut row_changed = rtl_labeled_spinbox_u32(
+                                        ui,
+                                        "Before",
+                                        position,
+                                        0..=999,
+                                        56.0,
+                                    );
                                     row_changed |= rtl_labeled_spinbox_u32(
                                         ui,
                                         "Characters",
@@ -833,9 +850,10 @@ impl RenameRxApp {
                             enabled,
                             start,
                             step: _,
-                            padding,
+                            padding: _,
                             position,
-                            separator: _,
+                            prefix: _,
+                            suffix: _,
                         } = serialize;
                         changed |= rule_row(
                             ui,
@@ -848,18 +866,6 @@ impl RenameRxApp {
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     let mut row_changed = combo_serialize_position(ui, position);
-                                    ui.label(
-                                        RichText::new("Position")
-                                            .size(12.5)
-                                            .color(ui.visuals().weak_text_color()),
-                                    );
-                                    row_changed |= rtl_labeled_spinbox_u32(
-                                        ui,
-                                        "Padding",
-                                        padding,
-                                        0..=12,
-                                        48.0,
-                                    );
                                     row_changed |= rtl_labeled_spinbox_i64(
                                         ui,
                                         "Start",
@@ -1558,7 +1564,8 @@ impl RenameRxApp {
                     RuleSettings::Replace => "These options apply to the Find and Replace fields.",
                     RuleSettings::Regex => "These options apply to the regular expression.",
                     RuleSettings::Serialize => {
-                        "Step and separator. Start, Padding and Position stay in the rule row."
+                        "Step, padding and the text around the number. \
+                         Start and After/Before stay in the rule row."
                     }
                 };
                 ui.label(
@@ -1594,17 +1601,33 @@ impl RenameRxApp {
                                 -999..=999,
                                 64.0,
                             );
-
-                            ui.add_space(10.0);
-                            ui.label(
-                                RichText::new("Separator")
-                                    .size(12.5)
-                                    .color(palette.secondary),
-                            );
-                            changed |= text_edit_fill(
+                            ui.add_space(6.0);
+                            changed |= labeled_spinbox_u32(
                                 ui,
-                                &mut self.rules.serialize.separator,
-                                "Separator",
+                                "Padding",
+                                &mut self.rules.serialize.padding,
+                                0..=12,
+                                64.0,
+                            );
+
+                            ui.add_space(12.0);
+                            ui.label(RichText::new("Prefix").size(12.5).color(palette.secondary));
+                            changed |=
+                                text_edit_fill(ui, &mut self.rules.serialize.prefix, "Prefix");
+
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Suffix").size(12.5).color(palette.secondary));
+                            changed |=
+                                text_edit_fill(ui, &mut self.rules.serialize.suffix, "Suffix");
+
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(
+                                    "Padding is the total width of the number (3 → 001). \
+                                     The default prefix is a space.",
+                                )
+                                .size(12.0)
+                                .color(palette.secondary),
                             );
                         }
                     }
@@ -1930,6 +1953,7 @@ fn rule_row(
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(columns.name);
+                ui.set_clip_rect(ui.max_rect());
 
                 changed |= ui
                     .checkbox(enabled, "")
@@ -1944,7 +1968,7 @@ fn rule_row(
                 } else {
                     RichText::new(name).size(13.5).color(palette.secondary)
                 };
-                ui.label(text);
+                ui.add(egui::Label::new(text).truncate());
             },
         );
 
@@ -1953,6 +1977,7 @@ fn rule_row(
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(columns.controls);
+                ui.set_clip_rect(ui.max_rect());
                 changed |= controls(ui);
             },
         );
@@ -1962,6 +1987,7 @@ fn rule_row(
             Layout::right_to_left(Align::Center),
             |ui| {
                 ui.set_width(columns.settings);
+                ui.set_clip_rect(ui.max_rect());
 
                 if let Some(kind) = settings
                     && settings_button(ui, palette, kind)
@@ -2020,6 +2046,28 @@ fn labeled_spinbox_i64(
                 .color(ui.visuals().weak_text_color()),
         );
         changed |= spinbox_i64(ui, value, range, width);
+    });
+
+    changed
+}
+
+fn labeled_spinbox_u32(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut u32,
+    range: RangeInclusive<u32>,
+    width: f32,
+) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            RichText::new(label)
+                .size(12.5)
+                .color(ui.visuals().weak_text_color()),
+        );
+        changed |= spinbox_u32(ui, value, range, width);
     });
 
     changed
@@ -2221,39 +2269,20 @@ fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
     changed
 }
 
-fn combo_remove_from(ui: &mut Ui, from: &mut RemoveFrom) -> bool {
-    let mut changed = false;
-    ComboBox::from_id_salt("remove_from")
-        .selected_text(match *from {
-            RemoveFrom::Start => "From start",
-            RemoveFrom::End => "From end",
-        })
-        .width(100.0)
-        .show_ui(ui, |ui| {
-            changed |= ui
-                .selectable_value(from, RemoveFrom::Start, "From start")
-                .changed();
-            changed |= ui
-                .selectable_value(from, RemoveFrom::End, "From end")
-                .changed();
-        });
-    changed
-}
-
 fn combo_serialize_position(ui: &mut Ui, position: &mut SerializePosition) -> bool {
     let mut changed = false;
     ComboBox::from_id_salt("serialize_position")
         .selected_text(match *position {
-            SerializePosition::Prefix => "Prefix",
-            SerializePosition::Suffix => "Suffix",
+            SerializePosition::After => "After",
+            SerializePosition::Before => "Before",
         })
         .width(84.0)
         .show_ui(ui, |ui| {
             changed |= ui
-                .selectable_value(position, SerializePosition::Prefix, "Prefix")
+                .selectable_value(position, SerializePosition::After, "After")
                 .changed();
             changed |= ui
-                .selectable_value(position, SerializePosition::Suffix, "Suffix")
+                .selectable_value(position, SerializePosition::Before, "Before")
                 .changed();
         });
     changed
