@@ -30,6 +30,31 @@ ask for confirmation. `Rename` (`Ctrl+Enter`) stages every change in the same
 directory and rolls back on failure. The last successful rename can be undone
 with `Ctrl+Z` or **Undo Rename** in the menu.
 
+## Build a test AppImage
+
+```sh
+./packaging/build-appimage.sh
+```
+
+The result is `dist/Rename_RX-x86_64.AppImage`. The script builds a release
+binary and downloads `appimagetool` into `dist/.tools` on the first run. A
+minimal desktop entry and icon are embedded only because `appimagetool`
+requires them; they are not installed on the system.
+
+If your system does not have FUSE, extract and run it:
+
+```sh
+./dist/Rename_RX-x86_64.AppImage --appimage-extract-and-run
+```
+
+To package a binary built elsewhere (for example in an older container for
+wider glibc compatibility):
+
+```sh
+RENAME_RX_SKIP_BUILD=1 RENAME_RX_BINARY=/path/to/rename-rx \
+  ./packaging/build-appimage.sh
+```
+
 ## Workspace
 
 | Crate | Purpose |

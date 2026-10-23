@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rename RX
+Comment=Batch file renamer for Linux
+Exec=rename-rx
+Icon=rename-rx
+Terminal=false
+Categories=Utility;FileTools;
+StartupNotify=true
