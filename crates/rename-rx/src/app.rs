@@ -2211,22 +2211,22 @@ fn labeled_spinbox_u32(
     range: RangeInclusive<u32>,
     width: f32,
 ) -> bool {
-    let mut changed = false;
-
-    // Label on the left and number on the right, so several labelled fields
-    // line up along the modal's right edge.
+    // The number sits on the modal's right edge with its label immediately to
+    // its left, so both labels and both fields line up on the right.
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(label)
-                .size(12.5)
-                .color(ui.visuals().weak_text_color()),
-        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            changed |= spinbox_u32(ui, value, range, width);
-        });
-    });
-
-    changed
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let changed = spinbox_u32(ui, value, range, width);
+            ui.label(
+                RichText::new(label)
+                    .size(12.5)
+                    .color(ui.visuals().weak_text_color()),
+            );
+            changed
+        })
+        .inner
+    })
+    .inner
 }
 
 /// Add a spinbox first and its label second. In a right-to-left parent this
