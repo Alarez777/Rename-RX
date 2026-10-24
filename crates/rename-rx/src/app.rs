@@ -1781,7 +1781,7 @@ impl RenameRxApp {
                                 ui,
                                 "Padding",
                                 &mut self.rules.serialize.padding,
-                                0..=12,
+                                1..=12,
                                 SPINBOX_WIDTH,
                             );
 
@@ -2213,14 +2213,17 @@ fn labeled_spinbox_u32(
 ) -> bool {
     let mut changed = false;
 
+    // Label on the left and number on the right, so several labelled fields
+    // line up along the modal's right edge.
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(
             RichText::new(label)
                 .size(12.5)
                 .color(ui.visuals().weak_text_color()),
         );
-        changed |= spinbox_u32(ui, value, range, width);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            changed |= spinbox_u32(ui, value, range, width);
+        });
     });
 
     changed
