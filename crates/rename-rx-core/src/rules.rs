@@ -619,6 +619,18 @@ mod tests {
     }
 
     #[test]
+    fn serialize_defaults_to_appending_one_by_one() {
+        let rule = SerializeRule::default();
+        assert_eq!(rule.start, 1);
+        assert_eq!(rule.step, 1);
+        assert_eq!(rule.offset, 0);
+        assert_eq!(rule.padding, 3);
+        assert_eq!(rule.position, SerializePosition::After);
+        assert_eq!(rule.prefix, " ");
+        assert!(rule.suffix.is_empty());
+    }
+
+    #[test]
     fn serialize_supports_position_padding_and_step() {
         let mut rules = RuleSet::default();
         rules.serialize.enabled = true;

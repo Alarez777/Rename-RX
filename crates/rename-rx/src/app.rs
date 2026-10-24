@@ -1773,7 +1773,7 @@ impl RenameRxApp {
                                 ui,
                                 "Step",
                                 &mut self.rules.serialize.step,
-                                0..=999,
+                                1..=999,
                                 SPINBOX_WIDTH,
                             );
                             ui.add_space(6.0);
