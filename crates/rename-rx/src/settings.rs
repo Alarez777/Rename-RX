@@ -38,10 +38,38 @@ impl ThemePreference {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowControlsStyle {
+    #[default]
+    Automatic,
+    Adwaita,
+}
+
+impl WindowControlsStyle {
+    pub const ALL: [Self; 2] = [Self::Automatic, Self::Adwaita];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Automatic => "Automatic",
+            Self::Adwaita => "GNOME (Adwaita)",
+        }
+    }
+
+    /// Resolve the platform-independent preference to the implementation used
+    /// today. Windows and macOS styles will be added later.
+    pub fn resolved(self) -> Self {
+        match self {
+            Self::Automatic | Self::Adwaita => Self::Adwaita,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemePreference,
+    pub window_controls: WindowControlsStyle,
 }
 
 impl Settings {

@@ -24,6 +24,11 @@ You can also drag files onto the window or press `Ctrl+O`. Select rows with a
 click, `Ctrl`/`Cmd`+click, or `Shift`+click. `Delete` removes the selected
 entries and `Ctrl+A` selects all of them.
 
+The window uses an Adwaita-style headerbar with close, minimize and
+maximize/restore controls. Drag any empty part of it to move the window, or
+double-click to maximize. **Settings → Window** keeps `Automatic` or pins
+`GNOME (Adwaita)`; other platform styles are planned.
+
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings
 ask for confirmation. `Rename` (`Ctrl+Enter`) stages every change in the same

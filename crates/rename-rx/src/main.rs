@@ -14,7 +14,13 @@ fn main() -> eframe::Result {
             .with_inner_size([980.0, 760.0])
             .with_min_inner_size([760.0, 520.0])
             .with_title("Rename RX")
-            .with_app_id("io.github.alarez777.RenameRX"),
+            .with_app_id("io.github.alarez777.RenameRX")
+            // The Adwaita style draws its own headerbar. Native decorations are
+            // kept for future automatic/native styles.
+            .with_decorations(
+                settings::Settings::load().window_controls.resolved()
+                    != settings::WindowControlsStyle::Adwaita,
+            ),
         ..Default::default()
     };
 

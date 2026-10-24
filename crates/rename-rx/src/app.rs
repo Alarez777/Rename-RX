@@ -5,9 +5,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Local};
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, ComboBox, CornerRadius, FontFamily, FontId, Frame, Key,
-    LayerId, Layout, Margin, Modifiers, Order, Rect, RichText, Sense, Shadow, Stroke, StrokeKind,
-    TextEdit, Theme, Ui, pos2, vec2,
+    self, Align, Align2, Button, Color32, ComboBox, CornerRadius, CursorIcon, FontFamily, FontId,
+    Frame, Key, LayerId, Layout, Margin, Modifiers, Order, Rect, ResizeDirection, RichText, Sense,
+    Shadow, Stroke, StrokeKind, TextEdit, Theme, Ui, ViewportCommand, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use rename_rx_core::{
@@ -17,12 +17,14 @@ use rename_rx_core::{
     build_preview, execute as execute_rename, plan_steps,
 };
 
-use crate::settings::{self, Settings, ThemePreference};
+use crate::settings::{self, Settings, ThemePreference, WindowControlsStyle};
 use crate::theme::{self, Palette, semibold};
 
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
 const RULE_ROW_HEIGHT: f32 = 34.0;
+const BEFORE_AFTER_WIDTH: f32 = 96.0;
+const SPINBOX_WIDTH: f32 = 72.0;
 
 #[derive(Clone, Copy)]
 struct RuleColumns {
@@ -54,6 +56,13 @@ enum RuleSettings {
     Replace,
     Regex,
     Serialize,
+}
+
+#[derive(Clone, Copy)]
+enum WindowControlIcon {
+    Close,
+    Minimize,
+    Maximize(bool),
 }
 
 impl RuleSettings {
@@ -465,17 +474,18 @@ impl RenameRxApp {
             return;
         }
 
-        let has_focus = ctx.memory(|memory| memory.focused().is_some());
+        let has_focus = ctx.egui_wants_keyboard_input();
         let (delete, select_all, escape, open, undo, rename) = ctx.input_mut(|input| {
-            (
-                input.consume_key(Modifiers::NONE, Key::Delete)
-                    || input.consume_key(Modifiers::NONE, Key::Backspace),
-                input.consume_key(Modifiers::COMMAND, Key::A),
-                input.consume_key(Modifiers::NONE, Key::Escape),
-                input.consume_key(Modifiers::COMMAND, Key::O),
-                input.consume_key(Modifiers::COMMAND, Key::Z),
-                input.consume_key(Modifiers::COMMAND, Key::Enter),
-            )
+            let delete = !has_focus
+                && (input.consume_key(Modifiers::NONE, Key::Delete)
+                    || input.consume_key(Modifiers::NONE, Key::Backspace));
+            let select_all = !has_focus && input.consume_key(Modifiers::COMMAND, Key::A);
+            let escape = !has_focus && input.consume_key(Modifiers::NONE, Key::Escape);
+            let open = input.consume_key(Modifiers::COMMAND, Key::O);
+            let undo = !has_focus && input.consume_key(Modifiers::COMMAND, Key::Z);
+            let rename = !has_focus && input.consume_key(Modifiers::COMMAND, Key::Enter);
+
+            (delete, select_all, escape, open, undo, rename)
         });
 
         if open {
@@ -540,6 +550,10 @@ impl RenameRxApp {
             )
             .show(ui, |ui| {
                 let panel_rect = ui.clip_rect();
+                let custom_chrome =
+                    self.settings.window_controls.resolved() == WindowControlsStyle::Adwaita;
+                let mut drag_left = panel_rect.left();
+                let mut drag_right = panel_rect.right();
 
                 ui.horizontal(|ui| {
                     let add_files = ui.add(
@@ -548,6 +562,7 @@ impl RenameRxApp {
                             .corner_radius(6)
                             .min_size(vec2(104.0, 32.0)),
                     );
+                    drag_left = add_files.rect.right() + 8.0;
                     if add_files
                         .on_hover_text("Add files to rename (Ctrl+O)")
                         .clicked()
@@ -556,6 +571,28 @@ impl RenameRxApp {
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let window_style = self.settings.window_controls.resolved();
+                        if window_style == WindowControlsStyle::Adwaita {
+                            let maximized = ui
+                                .ctx()
+                                .input(|input| input.viewport().maximized.unwrap_or(false));
+
+                            if window_control_button(ui, &palette, WindowControlIcon::Close) {
+                                ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                            }
+                            if window_control_button(
+                                ui,
+                                &palette,
+                                WindowControlIcon::Maximize(maximized),
+                            ) {
+                                ui.ctx()
+                                    .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+                            }
+                            if window_control_button(ui, &palette, WindowControlIcon::Minimize) {
+                                ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
+                            }
+                        }
+
                         let menu = egui::containers::menu::MenuButton::from_button(
                             Button::new(RichText::new("≡").size(19.0)).frame(false),
                         )
@@ -627,6 +664,7 @@ impl RenameRxApp {
                         if validity.clicked() {
                             self.validation_open = true;
                         }
+                        drag_right = validity.rect.left() - 8.0;
                         if has_files {
                             validity.on_hover_text(format!(
                                 "{errors} {}, {warnings} {}",
@@ -638,6 +676,28 @@ impl RenameRxApp {
                         }
                     });
                 });
+
+                if custom_chrome {
+                    let drag_rect = Rect::from_min_max(
+                        pos2(drag_left, panel_rect.top() + 6.0),
+                        pos2(drag_right, panel_rect.bottom()),
+                    );
+                    let drag_response = ui.interact(
+                        drag_rect,
+                        egui::Id::unique("titlebar_drag"),
+                        Sense::click_and_drag(),
+                    );
+                    if drag_response.drag_started() {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+                    }
+                    if drag_response.double_clicked() {
+                        let maximized = ui
+                            .ctx()
+                            .input(|input| input.viewport().maximized.unwrap_or(false));
+                        ui.ctx()
+                            .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+                    }
+                }
 
                 ui.painter().text(
                     panel_rect.center(),
@@ -801,14 +861,17 @@ impl RenameRxApp {
                             &mut open_settings,
                             |ui| {
                                 let gap = ui.spacing().item_spacing.x;
-                                let text_width =
-                                    (ui.available_width() - 86.0 - 72.0 - 2.0 * gap - 6.0)
-                                        .max(80.0);
+                                let text_width = (ui.available_width()
+                                    - BEFORE_AFTER_WIDTH
+                                    - (SPINBOX_WIDTH + 16.0)
+                                    - 2.0 * gap
+                                    - 6.0)
+                                    .max(80.0);
 
                                 let mut row_changed =
                                     text_edit_width(ui, text, text_width, "Text to insert");
                                 row_changed |= combo_insert_anchor(ui, anchor);
-                                row_changed |= spinbox_u32(ui, position, 0..=999, 56.0);
+                                row_changed |= spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
                                 row_changed
                             },
                         );
@@ -829,14 +892,15 @@ impl RenameRxApp {
                             &mut open_settings,
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed = spinbox_u32(ui, position, 0..=999, 56.0);
+                                    let mut row_changed =
+                                        spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
                                     row_changed |= combo_remove_origin(ui, origin);
                                     row_changed |= rtl_labeled_spinbox_u32(
                                         ui,
                                         "Characters",
                                         count,
                                         0..=999,
-                                        56.0,
+                                        SPINBOX_WIDTH,
                                     );
                                     row_changed
                                 })
@@ -851,8 +915,8 @@ impl RenameRxApp {
                             offset,
                             padding: _,
                             position,
-                            prefix: _,
-                            suffix: _,
+                            prefix: serialize_prefix,
+                            suffix: serialize_suffix,
                         } = serialize;
                         changed |= rule_row(
                             ui,
@@ -865,14 +929,19 @@ impl RenameRxApp {
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     let mut row_changed =
-                                        spinbox_i64(ui, offset, -999_999..=999_999, 56.0);
-                                    row_changed |= combo_serialize_position(ui, position);
+                                        spinbox_i64(ui, offset, -999_999..=999_999, SPINBOX_WIDTH);
+                                    row_changed |= combo_serialize_position(
+                                        ui,
+                                        position,
+                                        serialize_prefix,
+                                        serialize_suffix,
+                                    );
                                     row_changed |= rtl_labeled_spinbox_i64(
                                         ui,
                                         "Start",
                                         start,
                                         -999_999..=999_999,
-                                        64.0,
+                                        SPINBOX_WIDTH,
                                     );
                                     row_changed
                                 })
@@ -990,6 +1059,10 @@ impl RenameRxApp {
         let modifiers = ui.input(|input| input.modifiers);
         let mut clicked: Option<(FileId, usize)> = None;
 
+        // The table is for selection, not for selecting text. This also avoids
+        // the I-beam cursor and text-selection mode stealing clicks from rows.
+        ui.style_mut().interaction.selectable_labels = false;
+
         {
             let files = &self.files;
             let selected = &self.selected;
@@ -1058,7 +1131,8 @@ impl RenameRxApp {
                                 egui::Label::new(
                                     RichText::new(&file.original_name).color(palette.text),
                                 )
-                                .truncate(),
+                                .truncate()
+                                .selectable(false),
                             );
                         });
 
@@ -1069,7 +1143,8 @@ impl RenameRxApp {
                         row.col(|ui| {
                             ui.add(
                                 egui::Label::new(RichText::new(preview).color(palette.secondary))
-                                    .truncate(),
+                                    .truncate()
+                                    .selectable(false),
                             );
                         });
 
@@ -1225,6 +1300,7 @@ impl RenameRxApp {
         let palette = self.palette();
         let mut open = self.settings_open;
         let mut preference = self.settings.theme;
+        let mut window_controls = self.settings.window_controls;
 
         let modal = egui::Modal::new(egui::Id::unique("settings_modal"))
             .frame(modal_frame(&palette))
@@ -1263,6 +1339,35 @@ impl RenameRxApp {
                     .color(palette.secondary),
                 );
 
+                ui.add_space(18.0);
+                ui.label(
+                    RichText::new("Window")
+                        .font(FontId::new(13.0, semibold()))
+                        .color(palette.secondary),
+                );
+                ui.add_space(6.0);
+
+                ui.scope(|ui| {
+                    style_controls(ui, &palette);
+                    ComboBox::from_id_salt("window_controls_modal")
+                        .selected_text(window_controls.label())
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for style in WindowControlsStyle::ALL {
+                                ui.selectable_value(&mut window_controls, style, style.label());
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "Automatic uses the platform default. \
+                         Windows and macOS styles will be added later.",
+                    )
+                    .size(12.0)
+                    .color(palette.secondary),
+                );
+
                 ui.add_space(20.0);
                 ui.separator();
                 ui.add_space(12.0);
@@ -1291,6 +1396,11 @@ impl RenameRxApp {
         if preference != self.settings.theme {
             self.settings.theme = preference;
             self.apply_theme_preference(ctx);
+        }
+
+        if window_controls != self.settings.window_controls {
+            self.settings.window_controls = window_controls;
+            self.settings.save();
         }
     }
 
@@ -1586,7 +1696,7 @@ impl RenameRxApp {
                                 "Step",
                                 &mut self.rules.serialize.step,
                                 -999..=999,
-                                64.0,
+                                SPINBOX_WIDTH,
                             );
                             ui.add_space(6.0);
                             changed |= labeled_spinbox_u32(
@@ -1594,7 +1704,7 @@ impl RenameRxApp {
                                 "Padding",
                                 &mut self.rules.serialize.padding,
                                 0..=12,
-                                64.0,
+                                SPINBOX_WIDTH,
                             );
 
                             ui.add_space(12.0);
@@ -1822,6 +1932,9 @@ impl eframe::App for RenameRxApp {
         let ctx = ui.ctx().clone();
 
         self.poll_system_theme(&ctx);
+        if self.settings.window_controls.resolved() == WindowControlsStyle::Adwaita {
+            handle_window_resize(&ctx);
+        }
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
 
@@ -1940,7 +2053,6 @@ fn rule_row(
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(columns.name);
-                ui.set_clip_rect(ui.max_rect());
 
                 changed |= ui
                     .checkbox(enabled, "")
@@ -1964,7 +2076,6 @@ fn rule_row(
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(columns.controls);
-                ui.set_clip_rect(ui.max_rect());
                 changed |= controls(ui);
             },
         );
@@ -1974,7 +2085,6 @@ fn rule_row(
             Layout::right_to_left(Align::Center),
             |ui| {
                 ui.set_width(columns.settings);
-                ui.set_clip_rect(ui.max_rect());
 
                 if let Some(kind) = settings
                     && settings_button(ui, palette, kind)
@@ -2220,6 +2330,144 @@ fn settings_button(ui: &mut Ui, palette: &Palette, kind: RuleSettings) -> bool {
     clicked
 }
 
+fn handle_window_resize(ctx: &egui::Context) {
+    let Some(position) = ctx.input(|input| input.pointer.hover_pos()) else {
+        return;
+    };
+
+    let rect = ctx.content_rect();
+    let edge = 6.0;
+    let left = position.x <= rect.left() + edge;
+    let right = position.x >= rect.right() - edge;
+    let top = position.y <= rect.top() + edge;
+    let bottom = position.y >= rect.bottom() - edge;
+
+    let direction = match (left, right, top, bottom) {
+        (true, _, true, _) => Some(ResizeDirection::NorthWest),
+        (_, true, true, _) => Some(ResizeDirection::NorthEast),
+        (true, _, _, true) => Some(ResizeDirection::SouthWest),
+        (_, true, _, true) => Some(ResizeDirection::SouthEast),
+        (true, _, _, _) => Some(ResizeDirection::West),
+        (_, true, _, _) => Some(ResizeDirection::East),
+        (_, _, true, _) => Some(ResizeDirection::North),
+        (_, _, _, true) => Some(ResizeDirection::South),
+        _ => None,
+    };
+
+    let Some(direction) = direction else {
+        return;
+    };
+
+    ctx.set_cursor_icon(match direction {
+        ResizeDirection::NorthWest => CursorIcon::ResizeNorthWest,
+        ResizeDirection::NorthEast => CursorIcon::ResizeNorthEast,
+        ResizeDirection::SouthWest => CursorIcon::ResizeSouthWest,
+        ResizeDirection::SouthEast => CursorIcon::ResizeSouthEast,
+        ResizeDirection::West => CursorIcon::ResizeWest,
+        ResizeDirection::East => CursorIcon::ResizeEast,
+        ResizeDirection::North => CursorIcon::ResizeNorth,
+        ResizeDirection::South => CursorIcon::ResizeSouth,
+    });
+
+    if ctx.input(|input| input.pointer.primary_pressed()) {
+        ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+    }
+}
+
+fn window_control_button(ui: &mut Ui, palette: &Palette, icon: WindowControlIcon) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+    let is_close = matches!(icon, WindowControlIcon::Close);
+
+    if response.is_pointer_button_down_on() {
+        let fill = if is_close {
+            palette.danger
+        } else {
+            palette.button_active
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(7), fill);
+    } else if response.hovered() {
+        let fill = if is_close {
+            palette.danger
+        } else {
+            palette.button_hover
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(7), fill);
+    }
+
+    let color = if response.hovered() || response.is_pointer_button_down_on() {
+        if is_close {
+            Color32::WHITE
+        } else {
+            palette.text
+        }
+    } else {
+        palette.secondary
+    };
+    let center = rect.center();
+    let painter = ui.painter();
+    let stroke = Stroke::new(1.6, color);
+
+    match icon {
+        WindowControlIcon::Close => {
+            painter.line_segment(
+                [
+                    pos2(center.x - 4.0, center.y - 4.0),
+                    pos2(center.x + 4.0, center.y + 4.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    pos2(center.x - 4.0, center.y + 4.0),
+                    pos2(center.x + 4.0, center.y - 4.0),
+                ],
+                stroke,
+            );
+        }
+        WindowControlIcon::Minimize => {
+            painter.line_segment(
+                [
+                    pos2(center.x - 6.0, center.y + 3.0),
+                    pos2(center.x + 6.0, center.y + 3.0),
+                ],
+                stroke,
+            );
+        }
+        WindowControlIcon::Maximize(maximized) => {
+            if maximized {
+                painter.rect_stroke(
+                    Rect::from_center_size(center + vec2(-1.5, 1.5), vec2(9.0, 9.0)),
+                    CornerRadius::same(1),
+                    stroke,
+                    StrokeKind::Inside,
+                );
+                painter.rect_stroke(
+                    Rect::from_center_size(center + vec2(1.5, -1.5), vec2(9.0, 9.0)),
+                    CornerRadius::same(1),
+                    stroke,
+                    StrokeKind::Inside,
+                );
+            } else {
+                painter.rect_stroke(
+                    Rect::from_center_size(center, vec2(10.0, 10.0)),
+                    CornerRadius::same(1),
+                    stroke,
+                    StrokeKind::Inside,
+                );
+            }
+        }
+    }
+
+    let clicked = response.clicked();
+    response.on_hover_text(match icon {
+        WindowControlIcon::Close => "Close",
+        WindowControlIcon::Minimize => "Minimize",
+        WindowControlIcon::Maximize(false) => "Maximize",
+        WindowControlIcon::Maximize(true) => "Restore",
+    });
+    clicked
+}
+
 fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
     painter.circle_stroke(center, 5.0, Stroke::new(1.4, color));
     painter.circle_filled(center, 1.8, color);
@@ -2244,7 +2492,7 @@ fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
             InsertAnchor::Before => "Before",
             InsertAnchor::After => "After",
         })
-        .width(86.0)
+        .width(BEFORE_AFTER_WIDTH)
         .show_ui(ui, |ui| {
             changed |= ui
                 .selectable_value(anchor, InsertAnchor::Before, "Before")
@@ -2263,7 +2511,7 @@ fn combo_remove_origin(ui: &mut Ui, origin: &mut RemoveOrigin) -> bool {
             RemoveOrigin::Before => "Before",
             RemoveOrigin::After => "After",
         })
-        .width(84.0)
+        .width(BEFORE_AFTER_WIDTH)
         .show_ui(ui, |ui| {
             changed |= ui
                 .selectable_value(origin, RemoveOrigin::Before, "Before")
@@ -2275,14 +2523,20 @@ fn combo_remove_origin(ui: &mut Ui, origin: &mut RemoveOrigin) -> bool {
     changed
 }
 
-fn combo_serialize_position(ui: &mut Ui, position: &mut SerializePosition) -> bool {
+fn combo_serialize_position(
+    ui: &mut Ui,
+    position: &mut SerializePosition,
+    prefix: &mut String,
+    suffix: &mut String,
+) -> bool {
+    let old_position = *position;
     let mut changed = false;
     ComboBox::from_id_salt("serialize_position")
         .selected_text(match *position {
             SerializePosition::After => "After",
             SerializePosition::Before => "Before",
         })
-        .width(84.0)
+        .width(BEFORE_AFTER_WIDTH)
         .show_ui(ui, |ui| {
             changed |= ui
                 .selectable_value(position, SerializePosition::After, "After")
@@ -2291,6 +2545,26 @@ fn combo_serialize_position(ui: &mut Ui, position: &mut SerializePosition) -> bo
                 .selectable_value(position, SerializePosition::Before, "Before")
                 .changed();
         });
+
+    if old_position != *position {
+        let after_default = prefix.as_str() == " " && suffix.is_empty();
+        let before_default = prefix.is_empty() && suffix.as_str() == " ";
+
+        match (old_position, *position) {
+            (SerializePosition::After, SerializePosition::Before) if after_default => {
+                prefix.clear();
+                suffix.clear();
+                suffix.push(' ');
+            }
+            (SerializePosition::Before, SerializePosition::After) if before_default => {
+                prefix.clear();
+                prefix.push(' ');
+                suffix.clear();
+            }
+            _ => {}
+        }
+    }
+
     changed
 }
 
