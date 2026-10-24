@@ -114,9 +114,9 @@ pub enum RemoveOrigin {
 #[serde(default)]
 pub struct SerializeRule {
     pub enabled: bool,
-    pub start: i64,
-    pub step: i64,
-    pub offset: i64,
+    pub start: u32,
+    pub step: u32,
+    pub offset: u32,
     pub padding: u32,
     pub position: SerializePosition,
     pub prefix: String,
@@ -312,11 +312,12 @@ impl<'a> CompiledRules<'a> {
         }
 
         if self.rules.serialize.enabled {
+            let number = u64::from(self.rules.serialize.start)
+                + index as u64 * u64::from(self.rules.serialize.step)
+                + u64::from(self.rules.serialize.offset);
             stem = serialize(
                 &stem,
-                self.rules.serialize.start
-                    + index as i64 * self.rules.serialize.step
-                    + self.rules.serialize.offset,
+                number,
                 self.rules.serialize.padding,
                 self.rules.serialize.position,
                 &self.rules.serialize.prefix,
@@ -364,11 +365,13 @@ fn normalize_extension(value: &str) -> String {
 
 fn insert_text(stem: &str, text: &str, position: usize, anchor: InsertAnchor) -> String {
     let graphemes: Vec<&str> = stem.graphemes(true).collect();
+    let len = graphemes.len();
+    // `Before` counts from the start of the name; `After` counts from the end,
+    // where 0 is the very end and 5 is five graphemes before it.
     let index = match anchor {
-        InsertAnchor::Before => position,
-        InsertAnchor::After => position.saturating_add(1),
-    }
-    .min(graphemes.len());
+        InsertAnchor::Before => position.min(len),
+        InsertAnchor::After => len.saturating_sub(position.min(len)),
+    };
 
     let mut result = String::with_capacity(stem.len() + text.len());
     result.extend(graphemes[..index].iter().copied());
@@ -400,19 +403,14 @@ fn remove_chars(stem: &str, count: usize, origin: RemoveOrigin, position: usize)
 
 fn serialize(
     stem: &str,
-    number: i64,
+    number: u64,
     padding: u32,
     position: SerializePosition,
     prefix: &str,
     suffix: &str,
 ) -> String {
     let width = padding as usize;
-    let digits = if number < 0 {
-        format!("-{:0width$}", number.unsigned_abs())
-    } else {
-        format!("{number:0width$}")
-    };
-
+    let digits = format!("{number:0width$}");
     let token = format!("{prefix}{digits}{suffix}");
 
     if stem.is_empty() {
@@ -539,12 +537,20 @@ mod tests {
     #[test]
     fn insert_and_remove_count_graphemes() {
         assert_eq!(insert_text("abc", "X", 0, InsertAnchor::Before), "Xabc");
-        assert_eq!(insert_text("abc", "X", 0, InsertAnchor::After), "aXbc");
-        assert_eq!(insert_text("abc", "X", 99, InsertAnchor::After), "abcX");
+        assert_eq!(insert_text("abc", "X", 1, InsertAnchor::Before), "aXbc");
+        assert_eq!(insert_text("abc", "X", 99, InsertAnchor::Before), "abcX");
+        assert_eq!(insert_text("abc", "X", 0, InsertAnchor::After), "abcX");
+        assert_eq!(insert_text("abc", "X", 1, InsertAnchor::After), "abXc");
+        assert_eq!(insert_text("abc", "X", 3, InsertAnchor::After), "Xabc");
+        assert_eq!(insert_text("abc", "X", 99, InsertAnchor::After), "Xabc");
 
         let combined = "e\u{301}x";
         assert_eq!(
             insert_text(combined, "!", 1, InsertAnchor::Before),
+            "e\u{301}!x"
+        );
+        assert_eq!(
+            insert_text(combined, "!", 1, InsertAnchor::After),
             "e\u{301}!x"
         );
         assert_eq!(remove_chars("e\u{301}x", 1, RemoveOrigin::Before, 0), "x");

@@ -860,19 +860,16 @@ impl RenameRxApp {
                             None,
                             &mut open_settings,
                             |ui| {
-                                let gap = ui.spacing().item_spacing.x;
-                                let text_width = (ui.available_width()
-                                    - BEFORE_AFTER_WIDTH
-                                    - (SPINBOX_WIDTH + 16.0)
-                                    - 2.0 * gap
-                                    - 6.0)
-                                    .max(80.0);
-
-                                let mut row_changed =
-                                    text_edit_width(ui, text, text_width, "Text to insert");
-                                row_changed |= combo_insert_anchor(ui, anchor);
-                                row_changed |= spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
-                                row_changed
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed =
+                                        spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
+                                    row_changed |= combo_insert_anchor(ui, anchor);
+                                    let text_width = ui.available_width().max(80.0);
+                                    row_changed |=
+                                        text_edit_width(ui, text, text_width, "Text to insert");
+                                    row_changed
+                                })
+                                .inner
                             },
                         );
 
@@ -929,18 +926,18 @@ impl RenameRxApp {
                             |ui| {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     let mut row_changed =
-                                        spinbox_i64(ui, offset, -999_999..=999_999, SPINBOX_WIDTH);
+                                        spinbox_u32(ui, offset, 0..=999_999, SPINBOX_WIDTH);
                                     row_changed |= combo_serialize_position(
                                         ui,
                                         position,
                                         serialize_prefix,
                                         serialize_suffix,
                                     );
-                                    row_changed |= rtl_labeled_spinbox_i64(
+                                    row_changed |= rtl_labeled_spinbox_u32(
                                         ui,
                                         "Start",
                                         start,
-                                        -999_999..=999_999,
+                                        0..=999_999,
                                         SPINBOX_WIDTH,
                                     );
                                     row_changed
@@ -1691,11 +1688,11 @@ impl RenameRxApp {
                                 .changed();
                         }
                         RuleSettings::Serialize => {
-                            changed |= labeled_spinbox_i64(
+                            changed |= labeled_spinbox_u32(
                                 ui,
                                 "Step",
                                 &mut self.rules.serialize.step,
-                                -999..=999,
+                                0..=999,
                                 SPINBOX_WIDTH,
                             );
                             ui.add_space(6.0);
@@ -2126,28 +2123,6 @@ fn two_text_fields(
     changed
 }
 
-fn labeled_spinbox_i64(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut i64,
-    range: RangeInclusive<i64>,
-    width: f32,
-) -> bool {
-    let mut changed = false;
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(
-            RichText::new(label)
-                .size(12.5)
-                .color(ui.visuals().weak_text_color()),
-        );
-        changed |= spinbox_i64(ui, value, range, width);
-    });
-
-    changed
-}
-
 fn labeled_spinbox_u32(
     ui: &mut Ui,
     label: &str,
@@ -2172,22 +2147,6 @@ fn labeled_spinbox_u32(
 
 /// Add a spinbox first and its label second. In a right-to-left parent this
 /// leaves the label on the left and the number on the right.
-fn rtl_labeled_spinbox_i64(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut i64,
-    range: RangeInclusive<i64>,
-    width: f32,
-) -> bool {
-    let changed = spinbox_i64(ui, value, range, width);
-    ui.label(
-        RichText::new(label)
-            .size(12.5)
-            .color(ui.visuals().weak_text_color()),
-    );
-    changed
-}
-
 fn rtl_labeled_spinbox_u32(
     ui: &mut Ui,
     label: &str,
@@ -2201,42 +2160,6 @@ fn rtl_labeled_spinbox_u32(
             .size(12.5)
             .color(ui.visuals().weak_text_color()),
     );
-    changed
-}
-
-fn spinbox_i64(ui: &mut Ui, value: &mut i64, range: RangeInclusive<i64>, width: f32) -> bool {
-    let mut changed = false;
-    let (min, max) = (*range.start(), *range.end());
-
-    ui.allocate_ui_with_layout(
-        vec2(width + 16.0, 28.0),
-        Layout::left_to_right(Align::Center),
-        |ui| {
-            ui.set_width(width + 16.0);
-            ui.spacing_mut().item_spacing.x = 0.0;
-
-            changed |= ui
-                .add_sized(
-                    vec2(width, 28.0),
-                    egui::DragValue::new(value).range(range).speed(1.0),
-                )
-                .changed();
-
-            ui.allocate_ui_with_layout(vec2(16.0, 28.0), Layout::top_down(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-
-                if spin_arrow(ui, true) {
-                    *value = (*value + 1).min(max);
-                    changed = true;
-                }
-                if spin_arrow(ui, false) {
-                    *value = (*value - 1).max(min);
-                    changed = true;
-                }
-            });
-        },
-    );
-
     changed
 }
 
