@@ -29,6 +29,11 @@ maximize/restore controls. Drag any empty part of it to move the window, or
 double-click to maximize. **Settings → Window** keeps `Automatic` or pins
 `GNOME (Adwaita)`; other platform styles are planned.
 
+**Settings → File manager** can add a Nemo context-menu entry for any file,
+shown as “Rename with Rename RX” or “Renombrar con Rename RX” depending on the
+system language. The same section removes it again, or updates it if the
+application moved.
+
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings
 ask for confirmation. `Rename` (`Ctrl+Enter`) stages every change in the same

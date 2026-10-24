@@ -1,4 +1,5 @@
 mod app;
+mod nemo;
 mod settings;
 mod theme;
 

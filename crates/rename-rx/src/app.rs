@@ -42,6 +42,11 @@ struct PreviewCache {
     dirty: bool,
 }
 
+struct NemoNotice {
+    text: String,
+    error: bool,
+}
+
 impl PreviewCache {
     fn new() -> Self {
         Self {
@@ -107,6 +112,7 @@ pub struct RenameRxApp {
     about_open: bool,
     validation_open: bool,
     rule_settings: Option<RuleSettings>,
+    nemo_notice: Option<NemoNotice>,
 }
 
 impl RenameRxApp {
@@ -146,6 +152,7 @@ impl RenameRxApp {
             about_open: false,
             validation_open: false,
             rule_settings: None,
+            nemo_notice: None,
         };
 
         app.add_paths(initial_paths);
@@ -1298,6 +1305,8 @@ impl RenameRxApp {
         let mut open = self.settings_open;
         let mut preference = self.settings.theme;
         let mut window_controls = self.settings.window_controls;
+        let nemo_state = crate::nemo::state();
+        let mut nemo_notice = self.nemo_notice.take();
 
         let modal = egui::Modal::new(egui::Id::unique("settings_modal"))
             .frame(modal_frame(&palette))
@@ -1311,59 +1320,130 @@ impl RenameRxApp {
                 );
                 ui.add_space(18.0);
 
-                ui.label(
-                    RichText::new("Appearance")
-                        .font(FontId::new(13.0, semibold()))
-                        .color(palette.secondary),
-                );
-                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .max_height((ctx.content_rect().height() - 230.0).max(180.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Appearance")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
 
-                ui.scope(|ui| {
-                    style_controls(ui, &palette);
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
 
-                    for option in ThemePreference::ALL {
-                        ui.radio_value(&mut preference, option, option.label());
-                    }
-                });
-
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(
-                        "System follows the desktop's light or dark preference. \
-                         If the desktop does not report one, Rename RX uses dark.",
-                    )
-                    .size(12.0)
-                    .color(palette.secondary),
-                );
-
-                ui.add_space(18.0);
-                ui.label(
-                    RichText::new("Window")
-                        .font(FontId::new(13.0, semibold()))
-                        .color(palette.secondary),
-                );
-                ui.add_space(6.0);
-
-                ui.scope(|ui| {
-                    style_controls(ui, &palette);
-                    ComboBox::from_id_salt("window_controls_modal")
-                        .selected_text(window_controls.label())
-                        .width(220.0)
-                        .show_ui(ui, |ui| {
-                            for style in WindowControlsStyle::ALL {
-                                ui.selectable_value(&mut window_controls, style, style.label());
+                            for option in ThemePreference::ALL {
+                                ui.radio_value(&mut preference, option, option.label());
                             }
                         });
-                });
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(
-                        "Automatic uses the platform default. \
-                         Windows and macOS styles will be added later.",
-                    )
-                    .size(12.0)
-                    .color(palette.secondary),
-                );
+
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(
+                                "System follows the desktop's light or dark preference. \
+                                 If the desktop does not report one, Rename RX uses dark.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
+
+                        ui.add_space(18.0);
+                        ui.label(
+                            RichText::new("Window")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
+                            ComboBox::from_id_salt("window_controls_modal")
+                                .selected_text(window_controls.label())
+                                .width(220.0)
+                                .show_ui(ui, |ui| {
+                                    for style in WindowControlsStyle::ALL {
+                                        ui.selectable_value(
+                                            &mut window_controls,
+                                            style,
+                                            style.label(),
+                                        );
+                                    }
+                                });
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Automatic uses the platform default. \
+                                 Windows and macOS styles will be added later.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
+
+                        ui.add_space(18.0);
+                        ui.label(
+                            RichText::new("File manager")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
+
+                            match &nemo_state {
+                                Some(state) if state.current => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("Nemo action installed.")
+                                                .size(12.5)
+                                                .color(palette.secondary),
+                                        );
+                                        if ui.button("Remove").clicked() {
+                                            nemo_notice = Some(remove_nemo_notice());
+                                        }
+                                    });
+                                }
+                                Some(_) => {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Update Nemo Action").clicked() {
+                                            nemo_notice = Some(install_nemo_notice());
+                                        }
+                                        if ui.button("Remove").clicked() {
+                                            nemo_notice = Some(remove_nemo_notice());
+                                        }
+                                    });
+                                }
+                                None => {
+                                    if ui.button("Add Nemo Action").clicked() {
+                                        nemo_notice = Some(install_nemo_notice());
+                                    }
+                                }
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Adds “Rename with Rename RX” to Nemo's right-click menu \
+                                 for any file. The entry is shown in English or Spanish \
+                                 according to the system language.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
+
+                        if let Some(notice) = &nemo_notice {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(&notice.text).size(12.0).color(
+                                if notice.error {
+                                    palette.danger
+                                } else {
+                                    palette.secondary
+                                },
+                            ));
+                        }
+                    });
 
                 ui.add_space(20.0);
                 ui.separator();
@@ -1389,6 +1469,7 @@ impl RenameRxApp {
         }
 
         self.settings_open = open;
+        self.nemo_notice = if open { nemo_notice } else { None };
 
         if preference != self.settings.theme {
             self.settings.theme = preference;
@@ -2299,30 +2380,17 @@ fn handle_window_resize(ctx: &egui::Context) {
 
 fn window_control_button(ui: &mut Ui, palette: &Palette, icon: WindowControlIcon) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-    let is_close = matches!(icon, WindowControlIcon::Close);
 
     if response.is_pointer_button_down_on() {
-        let fill = if is_close {
-            palette.danger
-        } else {
-            palette.button_active
-        };
-        ui.painter().rect_filled(rect, CornerRadius::same(7), fill);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(7), palette.button_active);
     } else if response.hovered() {
-        let fill = if is_close {
-            palette.danger
-        } else {
-            palette.button_hover
-        };
-        ui.painter().rect_filled(rect, CornerRadius::same(7), fill);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(7), palette.button_hover);
     }
 
     let color = if response.hovered() || response.is_pointer_button_down_on() {
-        if is_close {
-            Color32::WHITE
-        } else {
-            palette.text
-        }
+        palette.text
     } else {
         palette.secondary
     };
@@ -2595,6 +2663,32 @@ fn paint_type_cell(ui: &mut Ui, extension: &str, palette: &Palette) {
         extension.to_lowercase()
     };
     ui.label(RichText::new(label).size(12.0).color(palette.secondary));
+}
+
+fn install_nemo_notice() -> NemoNotice {
+    match crate::nemo::install() {
+        Ok(_) => NemoNotice {
+            text: "Added to Nemo's context menu.".to_owned(),
+            error: false,
+        },
+        Err(error) => NemoNotice {
+            text: format!("Could not add the Nemo action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn remove_nemo_notice() -> NemoNotice {
+    match crate::nemo::remove() {
+        Ok(()) => NemoNotice {
+            text: "Removed the Nemo action.".to_owned(),
+            error: false,
+        },
+        Err(error) => NemoNotice {
+            text: format!("Could not remove the Nemo action: {error}"),
+            error: true,
+        },
+    }
 }
 
 fn modal_frame(palette: &Palette) -> Frame {
