@@ -144,11 +144,11 @@ impl Default for SerializeRule {
             step: 1,
             offset: 0,
             padding: 3,
-            position: SerializePosition::After,
-            // A leading space preserves the original `name 001` look;
-            // the space is part of the prefix rather than a separate separator.
-            prefix: " ".to_owned(),
-            suffix: String::new(),
+            position: SerializePosition::Before,
+            // A trailing space keeps the default `001 name` layout; the space
+            // travels with the number rather than being a separate separator.
+            prefix: String::new(),
+            suffix: " ".to_owned(),
         }
     }
 }
@@ -501,11 +501,11 @@ mod tests {
 
         assert_eq!(
             apply(&rules, "HEC-0941.jpg", 0),
-            "París Winter 2017 001.jpg"
+            "001 París Winter 2017.jpg"
         );
         assert_eq!(
             apply(&rules, "HEC-0942.jpg", 1),
-            "París Winter 2017 002.jpg"
+            "002 París Winter 2017.jpg"
         );
     }
 
@@ -520,7 +520,7 @@ mod tests {
         rules.suffix.enabled = true;
         rules.suffix.text = "!".to_owned();
 
-        assert_eq!(apply(&rules, "a.jpg", 0), "X Pic 001!.jpg");
+        assert_eq!(apply(&rules, "a.jpg", 0), "X 001 Pic!.jpg");
     }
 
     #[test]
@@ -619,15 +619,15 @@ mod tests {
     }
 
     #[test]
-    fn serialize_defaults_to_appending_one_by_one() {
+    fn serialize_defaults_to_prefixing_one_by_one() {
         let rule = SerializeRule::default();
         assert_eq!(rule.start, 1);
         assert_eq!(rule.step, 1);
         assert_eq!(rule.offset, 0);
         assert_eq!(rule.padding, 3);
-        assert_eq!(rule.position, SerializePosition::After);
-        assert_eq!(rule.prefix, " ");
-        assert!(rule.suffix.is_empty());
+        assert_eq!(rule.position, SerializePosition::Before);
+        assert!(rule.prefix.is_empty());
+        assert_eq!(rule.suffix, " ");
     }
 
     #[test]
@@ -652,14 +652,15 @@ mod tests {
         rules.serialize.start = 1;
         rules.serialize.offset = 2;
 
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo 003.jpg");
-        assert_eq!(apply(&rules, "photo.jpg", 1), "photo 004.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0), "003 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 1), "004 photo.jpg");
     }
 
     #[test]
     fn serialize_prefix_and_suffix_wrap_only_the_number() {
         let mut rules = RuleSet::default();
         rules.serialize.enabled = true;
+        rules.serialize.position = SerializePosition::After;
         rules.serialize.prefix = " [".to_owned();
         rules.serialize.suffix = "]".to_owned();
 

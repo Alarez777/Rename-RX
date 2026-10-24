@@ -491,9 +491,9 @@ mod tests {
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.order, vec![1, 2, 0]);
-        assert_eq!(result.previews[1], "A 001.txt");
-        assert_eq!(result.previews[2], "B 002.txt");
-        assert_eq!(result.previews[0], "C 003.txt");
+        assert_eq!(result.previews[1], "001 A.txt");
+        assert_eq!(result.previews[2], "002 B.txt");
+        assert_eq!(result.previews[0], "003 C.txt");
     }
 
     #[test]
@@ -507,8 +507,8 @@ mod tests {
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.order, vec![1, 0]);
-        assert_eq!(result.previews[1], "B 001.txt");
-        assert_eq!(result.previews[0], "A 002.txt");
+        assert_eq!(result.previews[1], "001 B.txt");
+        assert_eq!(result.previews[0], "002 A.txt");
     }
 
     #[test]
