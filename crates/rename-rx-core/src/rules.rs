@@ -93,13 +93,26 @@ pub enum InsertAnchor {
     After,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RemoveRule {
     pub enabled: bool,
     pub count: u32,
     pub origin: RemoveOrigin,
     pub position: u32,
+}
+
+impl Default for RemoveRule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            // Zero characters would silently do nothing; the rule is meant to
+            // be switched off instead.
+            count: 1,
+            origin: RemoveOrigin::Before,
+            position: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -561,6 +574,15 @@ mod tests {
         assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::After, 0), "abcd");
         assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::After, 1), "abcf");
         assert_eq!(remove_chars("abc", 2, RemoveOrigin::After, 99), "abc");
+    }
+
+    #[test]
+    fn remove_defaults_to_one_character() {
+        let mut rules = RuleSet::default();
+        assert_eq!(rules.remove.count, 1);
+
+        rules.remove.enabled = true;
+        assert_eq!(apply(&rules, "abcdef.txt", 0), "bcdef.txt");
     }
 
     #[test]

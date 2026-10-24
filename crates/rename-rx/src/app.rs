@@ -903,7 +903,7 @@ impl RenameRxApp {
                                         ui,
                                         "Characters",
                                         count,
-                                        0..=999,
+                                        1..=999,
                                         SPINBOX_WIDTH,
                                     );
                                     row_changed
