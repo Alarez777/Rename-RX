@@ -1,10 +1,12 @@
 mod app;
 mod desktop;
+mod dolphin;
 mod integration;
 mod nautilus;
 mod nemo;
 mod settings;
 mod theme;
+mod thunar;
 
 use std::path::PathBuf;
 

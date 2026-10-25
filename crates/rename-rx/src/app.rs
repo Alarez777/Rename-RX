@@ -115,6 +115,8 @@ pub struct RenameRxApp {
     nemo_notice: Option<Notice>,
     desktop_notice: Option<Notice>,
     nautilus_notice: Option<Notice>,
+    thunar_notice: Option<Notice>,
+    dolphin_notice: Option<Notice>,
 }
 
 impl RenameRxApp {
@@ -157,6 +159,8 @@ impl RenameRxApp {
             nemo_notice: None,
             desktop_notice: None,
             nautilus_notice: None,
+            thunar_notice: None,
+            dolphin_notice: None,
         };
 
         app.add_paths(initial_paths);
@@ -1314,9 +1318,13 @@ impl RenameRxApp {
         let nemo_state = crate::nemo::state();
         let nautilus_state = crate::nautilus::state();
         let nautilus_python = crate::nautilus::python_support_available();
+        let thunar_state = crate::thunar::state();
+        let dolphin_state = crate::dolphin::state();
         let mut desktop_notice = self.desktop_notice.take();
         let mut nemo_notice = self.nemo_notice.take();
         let mut nautilus_notice = self.nautilus_notice.take();
+        let mut thunar_notice = self.thunar_notice.take();
+        let mut dolphin_notice = self.dolphin_notice.take();
 
         let modal = egui::Modal::new(egui::Id::unique("settings_modal"))
             .frame(modal_frame(&palette))
@@ -1617,6 +1625,128 @@ impl RenameRxApp {
                             .size(12.0)
                             .color(palette.secondary),
                         );
+
+                        ui.add_space(18.0);
+                        ui.label(
+                            RichText::new("Thunar")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
+
+                            match &thunar_state {
+                                Some(state) if state.current => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("Thunar action installed.")
+                                                .size(12.5)
+                                                .color(palette.secondary),
+                                        );
+                                        if ui.button("Remove").clicked() {
+                                            thunar_notice = Some(remove_thunar_notice());
+                                        }
+                                    });
+                                }
+                                Some(_) => {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Update Thunar Action").clicked() {
+                                            thunar_notice = Some(install_thunar_notice());
+                                        }
+                                        if ui.button("Remove").clicked() {
+                                            thunar_notice = Some(remove_thunar_notice());
+                                        }
+                                    });
+                                }
+                                None => {
+                                    if ui.button("Add Thunar Action").clicked() {
+                                        thunar_notice = Some(install_thunar_notice());
+                                    }
+                                }
+                            }
+                        });
+                        if let Some(notice) = &thunar_notice {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(&notice.text).size(12.0).color(
+                                if notice.error {
+                                    palette.danger
+                                } else {
+                                    palette.secondary
+                                },
+                            ));
+                        }
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Adds “Rename with Rename RX” to Thunar's right-click menu \
+                                 for any file. Restart Thunar after adding or updating it.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
+
+                        ui.add_space(18.0);
+                        ui.label(
+                            RichText::new("Dolphin")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
+
+                            match &dolphin_state {
+                                Some(state) if state.current => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("Dolphin action installed.")
+                                                .size(12.5)
+                                                .color(palette.secondary),
+                                        );
+                                        if ui.button("Remove").clicked() {
+                                            dolphin_notice = Some(remove_dolphin_notice());
+                                        }
+                                    });
+                                }
+                                Some(_) => {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Update Dolphin Action").clicked() {
+                                            dolphin_notice = Some(install_dolphin_notice());
+                                        }
+                                        if ui.button("Remove").clicked() {
+                                            dolphin_notice = Some(remove_dolphin_notice());
+                                        }
+                                    });
+                                }
+                                None => {
+                                    if ui.button("Add Dolphin Action").clicked() {
+                                        dolphin_notice = Some(install_dolphin_notice());
+                                    }
+                                }
+                            }
+                        });
+                        if let Some(notice) = &dolphin_notice {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(&notice.text).size(12.0).color(
+                                if notice.error {
+                                    palette.danger
+                                } else {
+                                    palette.secondary
+                                },
+                            ));
+                        }
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Adds “Rename with Rename RX” to Dolphin's context menu \
+                                 for any file.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
                     });
 
                 ui.add_space(20.0);
@@ -1646,6 +1776,8 @@ impl RenameRxApp {
         self.nemo_notice = if open { nemo_notice } else { None };
         self.desktop_notice = if open { desktop_notice } else { None };
         self.nautilus_notice = if open { nautilus_notice } else { None };
+        self.thunar_notice = if open { thunar_notice } else { None };
+        self.dolphin_notice = if open { dolphin_notice } else { None };
 
         if preference != self.settings.theme {
             self.settings.theme = preference;
@@ -2934,6 +3066,58 @@ fn remove_nautilus_notice() -> Notice {
         },
         Err(error) => Notice {
             text: format!("Could not remove the Nautilus action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn install_thunar_notice() -> Notice {
+    match crate::thunar::install() {
+        Ok(_) => Notice {
+            text: "Added to Thunar. Restart Thunar to load the action.".to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not add the Thunar action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn remove_thunar_notice() -> Notice {
+    match crate::thunar::remove() {
+        Ok(()) => Notice {
+            text: "Removed from Thunar. Restart Thunar to unload it.".to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not remove the Thunar action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn install_dolphin_notice() -> Notice {
+    match crate::dolphin::install() {
+        Ok(_) => Notice {
+            text: "Added to Dolphin.".to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not add the Dolphin action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn remove_dolphin_notice() -> Notice {
+    match crate::dolphin::remove() {
+        Ok(()) => Notice {
+            text: "Removed from Dolphin.".to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not remove the Dolphin action: {error}"),
             error: true,
         },
     }

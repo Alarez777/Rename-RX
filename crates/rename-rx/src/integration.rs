@@ -1,6 +1,6 @@
 //! Helpers shared by the optional desktop integrations.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The file the desktop should launch.
 ///
@@ -19,5 +19,64 @@ pub(crate) fn launcher() -> Option<PathBuf> {
         std::env::current_dir()
             .ok()
             .map(|directory| directory.join(candidate))
+    }
+}
+
+/// Quote an executable path for a shell-style command line (Nemo and Thunar
+/// parse their command strings with a shell).
+pub(crate) fn shell_quoted_path(path: &Path) -> Result<String, String> {
+    let path = path_str(path)?;
+    let escaped = path.replace('%', "%%");
+    Ok(format!("'{}'", escaped.replace('\'', "'\\''")))
+}
+
+/// Quote an executable path for a Desktop Entry `Exec=` value (GNOME and KDE
+/// parse these with the desktop-entry rules, not with a shell).
+pub(crate) fn desktop_quoted_path(path: &Path) -> Result<String, String> {
+    let path = path_str(path)?;
+    let escaped = path.replace('%', "%%").replace('\\', "\\\\");
+    let escaped = escaped
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
+    Ok(format!("\"{escaped}\""))
+}
+
+fn path_str(path: &Path) -> Result<&str, String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| "The application path is not valid UTF-8.".to_owned())?;
+
+    if path.contains(['\n', '\r']) {
+        return Err("The application path contains unsupported line breaks.".to_owned());
+    }
+
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_quote_handles_spaces_quotes_and_percent() {
+        assert_eq!(
+            shell_quoted_path(Path::new("/tmp/andré's/100%/Rename RX")).unwrap(),
+            "'/tmp/andré'\\''s/100%%/Rename RX'"
+        );
+    }
+
+    #[test]
+    fn desktop_quote_handles_reserved_characters() {
+        assert_eq!(
+            desktop_quoted_path(Path::new("/tmp/a b/100%/x\"$`\\")).unwrap(),
+            "\"/tmp/a b/100%%/x\\\"\\$\\`\\\\\""
+        );
+    }
+
+    #[test]
+    fn rejects_line_breaks() {
+        assert!(shell_quoted_path(Path::new("/tmp/bad\npath")).is_err());
+        assert!(desktop_quoted_path(Path::new("/tmp/bad\rpath")).is_err());
     }
 }

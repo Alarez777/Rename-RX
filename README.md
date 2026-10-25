@@ -43,6 +43,12 @@ moved.
 `nautilus-python` (Fedora/Arch); restart Nautilus with `nautilus --quit` after
 adding or updating it.
 
+**Settings → Thunar** writes the same action into Thunar's custom actions
+(`uca.xml`), preserving existing ones; restart Thunar afterwards.
+
+**Settings → Dolphin** installs a KDE service menu for Dolphin; the KDE service
+cache is refreshed automatically.
+
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings
 ask for confirmation. `Rename` (`Ctrl+Enter`) stages every change in the same

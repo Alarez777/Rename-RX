@@ -104,20 +104,7 @@ fn action_contents(launcher: &Path) -> Result<String, String> {
 }
 
 fn exec_line(launcher: &Path) -> Result<String, String> {
-    let path = launcher
-        .to_str()
-        .ok_or_else(|| "The application path is not valid UTF-8.".to_owned())?;
-
-    if path.contains(['\n', '\r']) {
-        return Err("The application path contains unsupported line breaks.".to_owned());
-    }
-
-    // Nemo expands `%` tokens before parsing the command line, so a literal
-    // percent sign in the executable path must be doubled. The path is then
-    // single-quoted for the same shell-style parser.
-    let escaped = path.replace('%', "%%");
-    let quoted = format!("'{}'", escaped.replace('\'', "'\\''"));
-
+    let quoted = crate::integration::shell_quoted_path(launcher)?;
     Ok(format!("Exec={quoted} %F"))
 }
 

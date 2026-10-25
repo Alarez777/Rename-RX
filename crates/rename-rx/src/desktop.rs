@@ -161,23 +161,8 @@ fn desktop_contents(launcher: &Path) -> Result<String, String> {
 }
 
 fn exec_line(launcher: &Path) -> Result<String, String> {
-    let path = launcher
-        .to_str()
-        .ok_or_else(|| "The application path is not valid UTF-8.".to_owned())?;
-
-    if path.contains(['\n', '\r']) {
-        return Err("The application path contains unsupported line breaks.".to_owned());
-    }
-
-    // Desktop Entry values are not shell strings: quote the executable and
-    // escape the characters the specification reserves inside double quotes.
-    let escaped = path.replace('%', "%%").replace('\\', "\\\\");
-    let escaped = escaped
-        .replace('"', "\\\"")
-        .replace('`', "\\`")
-        .replace('$', "\\$");
-
-    Ok(format!("Exec=\"{escaped}\" %F"))
+    let quoted = crate::integration::desktop_quoted_path(launcher)?;
+    Ok(format!("Exec={quoted} %F"))
 }
 
 #[cfg(test)]
