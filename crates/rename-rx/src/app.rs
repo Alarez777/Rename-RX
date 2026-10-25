@@ -12,9 +12,9 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use rename_rx_core::{
     CaseMode, CaseRule, CharacterOrigin, ExtensionRule, FileEntry, FileId, InsertAnchor,
-    InsertRule, KeepRule, NewNameRule, RegexRule, RemoveRule, RenameOutcome, RenameStep,
-    ReplaceRule, RuleSet, SerializePosition, SerializeRule, Severity, SortMethod, SortRule,
-    TextRule, ValidationReport, build_preview, execute as execute_rename, plan_steps,
+    InsertRule, KeepRule, MoveAnchor, MoveRule, NewNameRule, RegexRule, RemoveRule, RenameOutcome,
+    RenameStep, ReplaceRule, RuleSet, SerializePosition, SerializeRule, Severity, SortMethod,
+    SortRule, TextRule, ValidationReport, build_preview, execute as execute_rename, plan_steps,
 };
 
 use crate::settings::{self, Settings, ThemePreference, WindowControlsStyle};
@@ -800,6 +800,7 @@ impl RenameRxApp {
                             insert,
                             keep,
                             remove,
+                            move_rule,
                             serialize,
                             prefix,
                             suffix,
@@ -945,6 +946,43 @@ impl RenameRxApp {
                                         1..=999,
                                         SPINBOX_WIDTH,
                                     );
+                                    row_changed
+                                })
+                                .inner
+                            },
+                        );
+
+                        let MoveRule {
+                            enabled,
+                            start,
+                            length,
+                            anchor,
+                            destination,
+                            offset,
+                        } = move_rule;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Move",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed =
+                                        spinbox_u32(ui, offset, 0..=999, SPINBOX_WIDTH);
+                                    row_changed |=
+                                        combo_character_origin(ui, "move_destination", destination);
+                                    row_changed |= rtl_labeled_spinbox_u32(
+                                        ui,
+                                        "Length",
+                                        length,
+                                        1..=999,
+                                        SPINBOX_WIDTH,
+                                    );
+                                    row_changed |= spinbox_u32(ui, start, 0..=999, SPINBOX_WIDTH);
+                                    row_changed |= combo_move_anchor(ui, "move_anchor", anchor);
                                     row_changed
                                 })
                                 .inner
@@ -2692,6 +2730,25 @@ fn combo_character_origin(ui: &mut Ui, id_salt: &str, origin: &mut CharacterOrig
                 .changed();
             changed |= ui
                 .selectable_value(origin, CharacterOrigin::After, "After")
+                .changed();
+        });
+    changed
+}
+
+fn combo_move_anchor(ui: &mut Ui, id_salt: &str, anchor: &mut MoveAnchor) -> bool {
+    let mut changed = false;
+    ComboBox::from_id_salt(id_salt)
+        .selected_text(match *anchor {
+            MoveAnchor::Start => "Start",
+            MoveAnchor::End => "End",
+        })
+        .width(BEFORE_AFTER_WIDTH)
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(anchor, MoveAnchor::Start, "Start")
+                .changed();
+            changed |= ui
+                .selectable_value(anchor, MoveAnchor::End, "End")
                 .changed();
         });
     changed

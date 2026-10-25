@@ -14,6 +14,7 @@ pub struct RuleSet {
     pub insert: InsertRule,
     pub keep: KeepRule,
     pub remove: RemoveRule,
+    pub move_rule: MoveRule,
     pub serialize: SerializeRule,
     pub prefix: TextRule,
     pub suffix: TextRule,
@@ -32,6 +33,7 @@ impl RuleSet {
             || self.insert.enabled
             || self.keep.enabled
             || self.remove.enabled
+            || self.move_rule.enabled
             || self.serialize.enabled
             || self.prefix.enabled
             || self.suffix.enabled
@@ -143,6 +145,38 @@ pub enum CharacterOrigin {
     #[default]
     Before,
     After,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MoveRule {
+    pub enabled: bool,
+    pub start: u32,
+    pub length: u32,
+    pub anchor: MoveAnchor,
+    pub destination: CharacterOrigin,
+    pub offset: u32,
+}
+
+impl Default for MoveRule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start: 0,
+            length: 1,
+            anchor: MoveAnchor::Start,
+            destination: CharacterOrigin::Before,
+            offset: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveAnchor {
+    #[default]
+    Start,
+    End,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -355,6 +389,17 @@ impl<'a> CompiledRules<'a> {
             );
         }
 
+        if self.rules.move_rule.enabled && self.rules.move_rule.length > 0 {
+            stem = move_text(
+                &stem,
+                self.rules.move_rule.start as usize,
+                self.rules.move_rule.length as usize,
+                self.rules.move_rule.anchor,
+                self.rules.move_rule.destination,
+                self.rules.move_rule.offset as usize,
+            );
+        }
+
         if self.rules.serialize.enabled {
             let number = u64::from(self.rules.serialize.start)
                 + index as u64 * u64::from(self.rules.serialize.step)
@@ -440,6 +485,50 @@ fn keep_text(stem: &str, count: usize, origin: CharacterOrigin, position: usize)
     };
 
     graphemes[start..end].concat()
+}
+
+fn move_text(
+    stem: &str,
+    start: usize,
+    length: usize,
+    anchor: MoveAnchor,
+    destination: CharacterOrigin,
+    offset: usize,
+) -> String {
+    let graphemes: Vec<&str> = stem.graphemes(true).collect();
+    let len = graphemes.len();
+
+    let (slice_start, slice_end) = match anchor {
+        MoveAnchor::Start => {
+            let start = start.min(len);
+            (start, start.saturating_add(length).min(len))
+        }
+        MoveAnchor::End => {
+            let end = len.saturating_sub(start.min(len));
+            (end.saturating_sub(length), end)
+        }
+    };
+
+    if slice_start == slice_end {
+        return stem.to_owned();
+    }
+
+    let moved: String = graphemes[slice_start..slice_end].concat();
+    let remaining: Vec<&str> = graphemes[..slice_start]
+        .iter()
+        .chain(graphemes[slice_end..].iter())
+        .copied()
+        .collect();
+    let insert_at = match destination {
+        CharacterOrigin::Before => offset.min(remaining.len()),
+        CharacterOrigin::After => remaining.len().saturating_sub(offset.min(remaining.len())),
+    };
+
+    let mut result = String::with_capacity(stem.len());
+    result.extend(remaining[..insert_at].iter().copied());
+    result.push_str(&moved);
+    result.extend(remaining[insert_at..].iter().copied());
+    result
 }
 
 fn remove_chars(stem: &str, count: usize, origin: CharacterOrigin, position: usize) -> String {
@@ -683,6 +772,115 @@ mod tests {
         rules.remove.position = 0;
 
         assert_eq!(apply(&rules, "original.txt", 0), "cd.txt");
+    }
+
+    #[test]
+    fn move_defaults_to_one_character() {
+        let rule = MoveRule::default();
+        assert!(!rule.enabled);
+        assert_eq!(rule.start, 0);
+        assert_eq!(rule.length, 1);
+        assert_eq!(rule.anchor, MoveAnchor::Start);
+        assert_eq!(rule.destination, CharacterOrigin::Before);
+        assert_eq!(rule.offset, 0);
+
+        let mut rules = RuleSet::default();
+        rules.move_rule.enabled = true;
+        assert!(rules.has_name_effects());
+    }
+
+    #[test]
+    fn move_relocates_a_range_from_start_or_end() {
+        assert_eq!(
+            move_text(
+                "abcdef",
+                0,
+                1,
+                MoveAnchor::Start,
+                CharacterOrigin::Before,
+                0
+            ),
+            "abcdef"
+        );
+        assert_eq!(
+            move_text(
+                "abcdef",
+                1,
+                1,
+                MoveAnchor::Start,
+                CharacterOrigin::Before,
+                0
+            ),
+            "bacdef"
+        );
+        assert_eq!(
+            move_text(
+                "abcdef",
+                0,
+                2,
+                MoveAnchor::Start,
+                CharacterOrigin::Before,
+                2
+            ),
+            "cdabef"
+        );
+        assert_eq!(
+            move_text("abcdef", 0, 1, MoveAnchor::Start, CharacterOrigin::After, 0),
+            "bcdefa"
+        );
+        assert_eq!(
+            move_text("abcdef", 0, 1, MoveAnchor::Start, CharacterOrigin::After, 1),
+            "bcdeaf"
+        );
+        assert_eq!(
+            move_text("abcdef", 0, 2, MoveAnchor::End, CharacterOrigin::Before, 0),
+            "efabcd"
+        );
+        assert_eq!(
+            move_text("abcdef", 2, 1, MoveAnchor::End, CharacterOrigin::Before, 0),
+            "dabcef"
+        );
+        assert_eq!(
+            move_text(
+                "e\u{301}x",
+                0,
+                1,
+                MoveAnchor::End,
+                CharacterOrigin::Before,
+                0
+            ),
+            "xe\u{301}"
+        );
+        assert_eq!(
+            move_text(
+                "abcdef",
+                99,
+                1,
+                MoveAnchor::Start,
+                CharacterOrigin::Before,
+                0
+            ),
+            "abcdef"
+        );
+    }
+
+    #[test]
+    fn move_runs_after_remove() {
+        let mut rules = RuleSet::default();
+        rules.new_name.enabled = true;
+        rules.new_name.value = "abcd".to_owned();
+        rules.remove.enabled = true;
+        rules.remove.count = 1;
+        rules.remove.origin = CharacterOrigin::Before;
+        rules.remove.position = 0;
+        rules.move_rule.enabled = true;
+        rules.move_rule.start = 0;
+        rules.move_rule.length = 1;
+        rules.move_rule.anchor = MoveAnchor::Start;
+        rules.move_rule.destination = CharacterOrigin::After;
+        rules.move_rule.offset = 0;
+
+        assert_eq!(apply(&rules, "original.txt", 0), "cdb.txt");
     }
 
     #[test]

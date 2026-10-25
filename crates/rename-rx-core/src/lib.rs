@@ -15,8 +15,8 @@ pub use preview::{
 pub use rename::{RenameError, RenameOutcome, RenameStep, execute, plan_steps};
 pub use rules::{
     CaseMode, CaseRule, CharacterOrigin, CompiledRules, ExtensionRule, InsertAnchor, InsertRule,
-    KeepRule, NameParts, NewNameRule, RegexRule, RemoveRule, ReplaceRule, RuleSet,
-    SerializePosition, SerializeRule, SortMethod, SortRule, TextRule, apply_rules,
+    KeepRule, MoveAnchor, MoveRule, NameParts, NewNameRule, RegexRule, RemoveRule, ReplaceRule,
+    RuleSet, SerializePosition, SerializeRule, SortMethod, SortRule, TextRule, apply_rules,
 };
 
 /// Human-readable application name.

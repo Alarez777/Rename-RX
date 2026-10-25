@@ -5,8 +5,8 @@ Rename RX is a native batch file renamer for Linux, written in Rust with
 It is a reimplementation of the macOS app **Rename X**, with an Adwaita-style
 interface that follows the system light/dark preference.
 
-> Status: Phase 3 plus Keep and per-rule option sheets for Replace, Regular
-> Expression and Serialize. Date/Time, Move and Part are next.
+> Status: Phase 3 plus Keep, Move and per-rule option sheets for Replace,
+> Regular Expression and Serialize. Date/Time and Part are next.
 
 ## Requirements
 
@@ -89,7 +89,7 @@ RENAME_RX_SKIP_BUILD=1 RENAME_RX_BINARY=/path/to/rename-rx \
 - [x] Phase 1 — Add Files, drag and drop, file table, selection, keyboard shortcuts
 - [x] Phase 2 — rule engine, live preview, validity report
 - [x] Phase 3 — transactional rename with undo
-- [ ] Phase 4 — Date/Time, Move, Part and the remaining per-rule settings
+- [ ] Phase 4 — Date/Time, Part and the remaining per-rule settings
 - [ ] Phase 5 — polish and accessibility
 - [ ] Phase 6 — AppImage packaging and release CI
 
