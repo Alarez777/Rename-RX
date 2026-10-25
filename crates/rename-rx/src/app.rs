@@ -47,6 +47,8 @@ struct Notice {
     error: bool,
 }
 
+type FileManagerRow<'a> = (&'a str, Option<bool>, bool, fn() -> Notice, fn() -> Notice);
+
 impl PreviewCache {
     fn new() -> Self {
         Self {
@@ -112,11 +114,8 @@ pub struct RenameRxApp {
     about_open: bool,
     validation_open: bool,
     rule_settings: Option<RuleSettings>,
-    nemo_notice: Option<Notice>,
     desktop_notice: Option<Notice>,
-    nautilus_notice: Option<Notice>,
-    thunar_notice: Option<Notice>,
-    dolphin_notice: Option<Notice>,
+    file_manager_notice: Option<Notice>,
 }
 
 impl RenameRxApp {
@@ -156,11 +155,8 @@ impl RenameRxApp {
             about_open: false,
             validation_open: false,
             rule_settings: None,
-            nemo_notice: None,
             desktop_notice: None,
-            nautilus_notice: None,
-            thunar_notice: None,
-            dolphin_notice: None,
+            file_manager_notice: None,
         };
 
         app.add_paths(initial_paths);
@@ -1321,10 +1317,7 @@ impl RenameRxApp {
         let thunar_state = crate::thunar::state();
         let dolphin_state = crate::dolphin::state();
         let mut desktop_notice = self.desktop_notice.take();
-        let mut nemo_notice = self.nemo_notice.take();
-        let mut nautilus_notice = self.nautilus_notice.take();
-        let mut thunar_notice = self.thunar_notice.take();
-        let mut dolphin_notice = self.dolphin_notice.take();
+        let mut file_manager_notice = self.file_manager_notice.take();
 
         let modal = egui::Modal::new(egui::Id::unique("settings_modal"))
             .frame(modal_frame(&palette))
@@ -1477,7 +1470,7 @@ impl RenameRxApp {
 
                         ui.add_space(18.0);
                         ui.label(
-                            RichText::new("Nemo")
+                            RichText::new("File manager integration")
                                 .font(FontId::new(13.0, semibold()))
                                 .color(palette.secondary),
                         );
@@ -1486,125 +1479,93 @@ impl RenameRxApp {
                         ui.scope(|ui| {
                             style_controls(ui, &palette);
 
-                            match &nemo_state {
-                                Some(state) if state.current => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new("Nemo action installed.")
-                                                .size(12.5)
-                                                .color(palette.secondary),
-                                        );
-                                        if ui.button("Remove").clicked() {
-                                            nemo_notice = Some(remove_nemo_notice());
+                            let managers: [FileManagerRow; 4] = [
+                                (
+                                    "Nemo",
+                                    nemo_state.as_ref().map(|state| state.current),
+                                    true,
+                                    install_nemo_notice,
+                                    remove_nemo_notice,
+                                ),
+                                (
+                                    "Nautilus",
+                                    nautilus_state.as_ref().map(|state| state.current),
+                                    nautilus_python,
+                                    install_nautilus_notice,
+                                    remove_nautilus_notice,
+                                ),
+                                (
+                                    "Thunar",
+                                    thunar_state.as_ref().map(|state| state.current),
+                                    true,
+                                    install_thunar_notice,
+                                    remove_thunar_notice,
+                                ),
+                                (
+                                    "Dolphin",
+                                    dolphin_state.as_ref().map(|state| state.current),
+                                    true,
+                                    install_dolphin_notice,
+                                    remove_dolphin_notice,
+                                ),
+                            ];
+
+                            for (name, state, enabled, install, remove) in managers {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(name).size(13.0).color(palette.text));
+
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        match state {
+                                            Some(true) => {
+                                                if ui.button("Remove").clicked() {
+                                                    file_manager_notice = Some(remove());
+                                                }
+                                                ui.label(
+                                                    RichText::new("Installed")
+                                                        .size(12.0)
+                                                        .color(palette.secondary),
+                                                );
+                                            }
+                                            Some(false) => {
+                                                if ui.button("Remove").clicked() {
+                                                    file_manager_notice = Some(remove());
+                                                }
+                                                if ui.button("Update").clicked() {
+                                                    file_manager_notice = Some(install());
+                                                }
+                                            }
+                                            None => {
+                                                let response =
+                                                    ui.add_enabled(enabled, Button::new("Add"));
+                                                if response.clicked() {
+                                                    file_manager_notice = Some(install());
+                                                }
+                                                if !enabled {
+                                                    response.on_disabled_hover_text(
+                                                        "Requires python3-nautilus",
+                                                    );
+                                                }
+                                            }
                                         }
                                     });
-                                }
-                                Some(_) => {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Update Nemo Action").clicked() {
-                                            nemo_notice = Some(install_nemo_notice());
-                                        }
-                                        if ui.button("Remove").clicked() {
-                                            nemo_notice = Some(remove_nemo_notice());
-                                        }
-                                    });
-                                }
-                                None => {
-                                    if ui.button("Add Nemo Action").clicked() {
-                                        nemo_notice = Some(install_nemo_notice());
-                                    }
-                                }
+                                });
+                                ui.add_space(2.0);
                             }
                         });
-                        if let Some(notice) = &nemo_notice {
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(&notice.text).size(12.0).color(
-                                if notice.error {
-                                    palette.danger
-                                } else {
-                                    palette.secondary
-                                },
-                            ));
-                        }
-
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Adds “Rename with Rename RX” to Nemo's right-click menu \
-                                 for any file. The entry is shown in English or Spanish \
-                                 according to the system language.",
-                            )
-                            .size(12.0)
-                            .color(palette.secondary),
-                        );
-
-                        ui.add_space(18.0);
-                        ui.label(
-                            RichText::new("Nautilus")
-                                .font(FontId::new(13.0, semibold()))
-                                .color(palette.secondary),
-                        );
-                        ui.add_space(6.0);
 
                         if !nautilus_python {
+                            ui.add_space(2.0);
                             ui.label(
                                 RichText::new(
-                                    "Nautilus Python extensions are not installed. Install \
-                                     python3-nautilus (Debian/Ubuntu) or nautilus-python \
-                                     (Fedora/Arch) first.",
+                                    "Nautilus integration requires python3-nautilus \
+                                     (Debian/Ubuntu) or nautilus-python (Fedora/Arch).",
                                 )
                                 .size(12.0)
                                 .color(palette.warning),
                             );
-                            ui.add_space(6.0);
                         }
 
-                        ui.scope(|ui| {
-                            style_controls(ui, &palette);
-
-                            match &nautilus_state {
-                                Some(state) if state.current => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new("Nautilus action installed.")
-                                                .size(12.5)
-                                                .color(palette.secondary),
-                                        );
-                                        if ui.button("Remove").clicked() {
-                                            nautilus_notice = Some(remove_nautilus_notice());
-                                        }
-                                    });
-                                }
-                                Some(_) => {
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .add_enabled(
-                                                nautilus_python,
-                                                Button::new("Update Nautilus Action"),
-                                            )
-                                            .clicked()
-                                        {
-                                            nautilus_notice = Some(install_nautilus_notice());
-                                        }
-                                        if ui.button("Remove").clicked() {
-                                            nautilus_notice = Some(remove_nautilus_notice());
-                                        }
-                                    });
-                                }
-                                None => {
-                                    if ui
-                                        .add_enabled(
-                                            nautilus_python,
-                                            Button::new("Add Nautilus Action"),
-                                        )
-                                        .clicked()
-                                    {
-                                        nautilus_notice = Some(install_nautilus_notice());
-                                    }
-                                }
-                            }
-                        });
-                        if let Some(notice) = &nautilus_notice {
+                        if let Some(notice) = &file_manager_notice {
                             ui.add_space(4.0);
                             ui.label(RichText::new(&notice.text).size(12.0).color(
                                 if notice.error {
@@ -1615,134 +1576,13 @@ impl RenameRxApp {
                             ));
                         }
 
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Adds “Rename with Rename RX” to Nautilus' right-click menu \
-                                 for any file. Restart Nautilus (nautilus --quit) \
-                                 after adding or updating it.",
-                            )
-                            .size(12.0)
-                            .color(palette.secondary),
-                        );
-
-                        ui.add_space(18.0);
-                        ui.label(
-                            RichText::new("Thunar")
-                                .font(FontId::new(13.0, semibold()))
-                                .color(palette.secondary),
-                        );
                         ui.add_space(6.0);
-
-                        ui.scope(|ui| {
-                            style_controls(ui, &palette);
-
-                            match &thunar_state {
-                                Some(state) if state.current => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new("Thunar action installed.")
-                                                .size(12.5)
-                                                .color(palette.secondary),
-                                        );
-                                        if ui.button("Remove").clicked() {
-                                            thunar_notice = Some(remove_thunar_notice());
-                                        }
-                                    });
-                                }
-                                Some(_) => {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Update Thunar Action").clicked() {
-                                            thunar_notice = Some(install_thunar_notice());
-                                        }
-                                        if ui.button("Remove").clicked() {
-                                            thunar_notice = Some(remove_thunar_notice());
-                                        }
-                                    });
-                                }
-                                None => {
-                                    if ui.button("Add Thunar Action").clicked() {
-                                        thunar_notice = Some(install_thunar_notice());
-                                    }
-                                }
-                            }
-                        });
-                        if let Some(notice) = &thunar_notice {
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(&notice.text).size(12.0).color(
-                                if notice.error {
-                                    palette.danger
-                                } else {
-                                    palette.secondary
-                                },
-                            ));
-                        }
-                        ui.add_space(4.0);
                         ui.label(
                             RichText::new(
-                                "Adds “Rename with Rename RX” to Thunar's right-click menu \
-                                 for any file. Restart Thunar after adding or updating it.",
-                            )
-                            .size(12.0)
-                            .color(palette.secondary),
-                        );
-
-                        ui.add_space(18.0);
-                        ui.label(
-                            RichText::new("Dolphin")
-                                .font(FontId::new(13.0, semibold()))
-                                .color(palette.secondary),
-                        );
-                        ui.add_space(6.0);
-
-                        ui.scope(|ui| {
-                            style_controls(ui, &palette);
-
-                            match &dolphin_state {
-                                Some(state) if state.current => {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new("Dolphin action installed.")
-                                                .size(12.5)
-                                                .color(palette.secondary),
-                                        );
-                                        if ui.button("Remove").clicked() {
-                                            dolphin_notice = Some(remove_dolphin_notice());
-                                        }
-                                    });
-                                }
-                                Some(_) => {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Update Dolphin Action").clicked() {
-                                            dolphin_notice = Some(install_dolphin_notice());
-                                        }
-                                        if ui.button("Remove").clicked() {
-                                            dolphin_notice = Some(remove_dolphin_notice());
-                                        }
-                                    });
-                                }
-                                None => {
-                                    if ui.button("Add Dolphin Action").clicked() {
-                                        dolphin_notice = Some(install_dolphin_notice());
-                                    }
-                                }
-                            }
-                        });
-                        if let Some(notice) = &dolphin_notice {
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(&notice.text).size(12.0).color(
-                                if notice.error {
-                                    palette.danger
-                                } else {
-                                    palette.secondary
-                                },
-                            ));
-                        }
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Adds “Rename with Rename RX” to Dolphin's context menu \
-                                 for any file.",
+                                "These entries open the selected files in Rename RX from each \
+                                 file manager's context menu. They follow the system language; \
+                                 restart Nautilus or Thunar after changes. Use Update if the \
+                                 AppImage moves.",
                             )
                             .size(12.0)
                             .color(palette.secondary),
@@ -1773,11 +1613,8 @@ impl RenameRxApp {
         }
 
         self.settings_open = open;
-        self.nemo_notice = if open { nemo_notice } else { None };
         self.desktop_notice = if open { desktop_notice } else { None };
-        self.nautilus_notice = if open { nautilus_notice } else { None };
-        self.thunar_notice = if open { thunar_notice } else { None };
-        self.dolphin_notice = if open { dolphin_notice } else { None };
+        self.file_manager_notice = if open { file_manager_notice } else { None };
 
         if preference != self.settings.theme {
             self.settings.theme = preference;

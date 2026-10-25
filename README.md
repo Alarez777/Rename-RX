@@ -33,21 +33,11 @@ double-click to maximize. **Settings → Window** keeps `Automatic` or pins
 GNOME Shell groups every Rename RX window under the correct dock icon. The same
 section updates or removes it.
 
-**Settings → Nemo** can add a Nemo context-menu entry for any file, shown as
-“Rename with Rename RX” or “Renombrar con Rename RX” depending on the system
-language. The same section removes it again, or updates it if the application
-moved.
-
-**Settings → Nautilus** adds the equivalent entry to Nautilus through a
-`nautilus-python` extension. It requires `python3-nautilus` (Debian/Ubuntu) or
-`nautilus-python` (Fedora/Arch); restart Nautilus with `nautilus --quit` after
-adding or updating it.
-
-**Settings → Thunar** writes the same action into Thunar's custom actions
-(`uca.xml`), preserving existing ones; restart Thunar afterwards.
-
-**Settings → Dolphin** installs a KDE service menu for Dolphin; the KDE service
-cache is refreshed automatically.
+**Settings → File manager integration** can add a “Rename with Rename RX” /
+“Renombrar con Rename RX” entry to the context menu of Nemo, Nautilus, Thunar
+and Dolphin for any file. Nautilus requires `python3-nautilus` (Debian/Ubuntu)
+or `nautilus-python` (Fedora/Arch); restart Nautilus or Thunar after changes.
+Use Update if the application moves.
 
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings
