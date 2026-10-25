@@ -4,6 +4,7 @@ mod dolphin;
 mod integration;
 mod nautilus;
 mod nemo;
+mod presets;
 mod settings;
 mod theme;
 mod thunar;

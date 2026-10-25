@@ -114,6 +114,15 @@ pub struct RenameRxApp {
     about_open: bool,
     validation_open: bool,
     rule_settings: Option<RuleSettings>,
+    presets: crate::presets::PresetStore,
+    presets_open: bool,
+    preset_selected: Option<String>,
+    preset_name_open: bool,
+    preset_name: String,
+    preset_name_focus: bool,
+    preset_error: Option<String>,
+    preset_notice: Option<String>,
+    preset_delete: Option<String>,
     desktop_notice: Option<Notice>,
     file_manager_notice: Option<Notice>,
 }
@@ -155,6 +164,15 @@ impl RenameRxApp {
             about_open: false,
             validation_open: false,
             rule_settings: None,
+            presets: crate::presets::PresetStore::load(),
+            presets_open: false,
+            preset_selected: None,
+            preset_name_open: false,
+            preset_name: String::new(),
+            preset_name_focus: false,
+            preset_error: None,
+            preset_notice: None,
+            preset_delete: None,
             desktop_notice: None,
             file_manager_notice: None,
         };
@@ -675,7 +693,6 @@ impl RenameRxApp {
                         if validity.clicked() {
                             self.validation_open = true;
                         }
-                        drag_right = validity.rect.left() - 8.0;
                         if has_files {
                             validity.on_hover_text(format!(
                                 "{errors} {}, {warnings} {}",
@@ -685,6 +702,20 @@ impl RenameRxApp {
                         } else {
                             validity.on_disabled_hover_text("Add files first");
                         }
+
+                        let presets = ui.add(Button::new("Presets"));
+                        if presets.clicked() {
+                            self.presets_open = true;
+                            self.preset_selected = None;
+                            self.preset_name_open = false;
+                            self.preset_name.clear();
+                            self.preset_error = None;
+                            self.preset_notice = None;
+                            self.preset_delete = None;
+                        }
+                        let presets_left = presets.rect.left();
+                        presets.on_hover_text("Saved rule presets");
+                        drag_right = presets_left - 8.0;
                     });
                 });
 
@@ -1700,6 +1731,284 @@ impl RenameRxApp {
         }
     }
 
+    fn presets_modal(&mut self, ctx: &egui::Context) {
+        if !self.presets_open {
+            return;
+        }
+
+        let palette = self.palette();
+        let presets = self.presets.presets.clone();
+        let mut open = true;
+        let mut save_name: Option<String> = None;
+        let mut delete_name: Option<String> = None;
+        let mut load_name: Option<String> = None;
+
+        let modal = egui::Modal::new(egui::Id::unique("presets_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(420.0);
+
+                ui.label(
+                    RichText::new("Presets")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Saved rule configurations.")
+                        .size(12.0)
+                        .color(palette.secondary),
+                );
+                ui.add_space(14.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        self.preset_name_open = true;
+                        self.preset_name_focus = true;
+                        self.preset_name.clear();
+                        self.preset_error = None;
+                        self.preset_notice = None;
+                        self.preset_delete = None;
+                    }
+
+                    let has_selection = self.preset_selected.is_some();
+                    if ui
+                        .add_enabled(has_selection, Button::new("Load"))
+                        .on_disabled_hover_text("Select a preset first")
+                        .clicked()
+                    {
+                        load_name = self.preset_selected.clone();
+                    }
+                    if ui
+                        .add_enabled(has_selection, Button::new("Delete"))
+                        .on_disabled_hover_text("Select a preset first")
+                        .clicked()
+                    {
+                        self.preset_delete = self.preset_selected.clone();
+                    }
+                });
+
+                if self.preset_name_open {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        let enter_pressed = ui.input(|input| input.key_pressed(Key::Enter));
+                        let escape_pressed = ui.input(|input| input.key_pressed(Key::Escape));
+
+                        let response = ui.add_sized(
+                            [220.0, 28.0],
+                            TextEdit::singleline(&mut self.preset_name).hint_text("Preset name"),
+                        );
+                        if self.preset_name_focus {
+                            response.request_focus();
+                            self.preset_name_focus = false;
+                        }
+
+                        let enter =
+                            enter_pressed && (response.has_focus() || response.lost_focus());
+                        let escape =
+                            escape_pressed && (response.has_focus() || response.lost_focus());
+
+                        if enter || ui.button("Save").clicked() {
+                            save_name = Some(self.preset_name.clone());
+                        }
+                        if escape || ui.button("Cancel").clicked() {
+                            self.preset_name_open = false;
+                            self.preset_name.clear();
+                            self.preset_error = None;
+                        }
+                    });
+                }
+
+                if let Some(name) = self.preset_delete.clone() {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("Delete “{name}”?"))
+                                .size(12.5)
+                                .color(palette.text),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .add(Button::new(RichText::new("Delete").color(palette.danger)))
+                                .clicked()
+                            {
+                                delete_name = Some(name.clone());
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.preset_delete = None;
+                            }
+                        });
+                    });
+                }
+
+                if let Some(error) = &self.preset_error {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(error).size(12.0).color(palette.danger));
+                } else if let Some(notice) = &self.preset_notice {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(notice).size(12.0).color(palette.secondary));
+                }
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        if presets.is_empty() {
+                            ui.add_space(12.0);
+                            ui.label(
+                                RichText::new(
+                                    "No presets yet. Save the current rules to create one.",
+                                )
+                                .size(12.0)
+                                .color(palette.secondary),
+                            );
+                        } else {
+                            for preset in &presets {
+                                let selected =
+                                    self.preset_selected.as_deref() == Some(preset.name.as_str());
+                                let response = preset_row(ui, &preset.name, selected, &palette);
+
+                                if response.clicked() {
+                                    self.preset_selected = Some(preset.name.clone());
+                                    self.preset_delete = None;
+                                }
+                                if response.double_clicked() {
+                                    load_name = Some(preset.name.clone());
+                                }
+                                ui.add_space(4.0);
+                            }
+                        }
+                    });
+
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Select a preset and click Load, or double-click it.")
+                        .size(12.0)
+                        .color(palette.secondary),
+                );
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Close").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(88.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        if let Some(name) = save_name {
+            self.save_preset(&name);
+        }
+        if let Some(name) = delete_name {
+            self.delete_preset(&name);
+        }
+        if let Some(name) = load_name {
+            self.load_preset(&name);
+            open = false;
+        }
+
+        self.presets_open = open;
+        if !open {
+            self.preset_name_open = false;
+            self.preset_name.clear();
+            self.preset_delete = None;
+            self.preset_error = None;
+            self.preset_notice = None;
+        }
+    }
+
+    fn save_preset(&mut self, raw_name: &str) {
+        let name = raw_name.trim();
+        if name.is_empty() {
+            self.preset_error = Some("Enter a name for the preset.".to_owned());
+            return;
+        }
+        if self.presets.find(name).is_some() {
+            self.preset_error = Some("A preset with that name already exists.".to_owned());
+            return;
+        }
+
+        self.presets.presets.push(crate::presets::Preset {
+            name: name.to_owned(),
+            rules: self.rules.clone(),
+        });
+
+        match self.presets.save() {
+            Ok(()) => {
+                self.preset_name_open = false;
+                self.preset_name.clear();
+                self.preset_name_focus = false;
+                self.preset_error = None;
+                self.preset_notice = Some(format!("Preset “{name}” saved."));
+                self.preset_selected = Some(name.to_owned());
+            }
+            Err(error) => {
+                self.presets.presets.pop();
+                self.preset_error = Some(error);
+            }
+        }
+    }
+
+    fn delete_preset(&mut self, name: &str) {
+        let Some(index) = self.presets.find(name) else {
+            return;
+        };
+
+        let removed = self.presets.presets.remove(index);
+        match self.presets.save() {
+            Ok(()) => {
+                if self.preset_selected.as_deref() == Some(removed.name.as_str()) {
+                    self.preset_selected = None;
+                }
+                self.preset_delete = None;
+                self.preset_error = None;
+                self.preset_notice = Some(format!("Preset “{}” deleted.", removed.name));
+            }
+            Err(error) => {
+                self.presets.presets.insert(index, removed);
+                self.preset_error = Some(error);
+            }
+        }
+    }
+
+    fn load_preset(&mut self, name: &str) {
+        let Some(preset) = self
+            .presets
+            .presets
+            .iter()
+            .find(|preset| preset.name == name)
+            .cloned()
+        else {
+            return;
+        };
+
+        self.rules = preset.rules;
+        self.preview.dirty = true;
+        self.selection_anchor = None;
+        self.presets_open = false;
+        self.preset_name_open = false;
+        self.preset_delete = None;
+        self.preset_error = None;
+        self.preset_notice = None;
+    }
+
     fn about_modal(&mut self, ctx: &egui::Context) {
         if !self.about_open {
             return;
@@ -2262,6 +2571,7 @@ impl eframe::App for RenameRxApp {
         self.confirm_rename_modal(&ctx);
         self.rename_error_modal(&ctx);
         self.settings_modal(&ctx);
+        self.presets_modal(&ctx);
         self.about_modal(&ctx);
         self.drag_overlay(&ctx);
 
@@ -3050,6 +3360,63 @@ fn remove_dolphin_notice() -> Notice {
             error: true,
         },
     }
+}
+
+fn preset_row(ui: &mut Ui, name: &str, selected: bool, palette: &Palette) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+
+    let fill = if selected {
+        palette.selection
+    } else if response.hovered() {
+        palette.button_hover
+    } else {
+        palette.input
+    };
+    let border = if selected {
+        palette.accent
+    } else {
+        palette.border
+    };
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(7),
+        fill,
+        Stroke::new(if selected { 1.5 } else { 1.0 }, border),
+        StrokeKind::Inside,
+    );
+
+    ui.painter().text(
+        pos2(rect.left() + 12.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        name,
+        FontId::proportional(13.5),
+        palette.text,
+    );
+
+    let chevron_color = if selected {
+        palette.accent
+    } else {
+        palette.secondary
+    };
+    let chevron_x = rect.right() - 15.0;
+    let chevron_y = rect.center().y;
+    let chevron = Stroke::new(1.4, chevron_color);
+    ui.painter().line_segment(
+        [
+            pos2(chevron_x - 3.0, chevron_y - 4.0),
+            pos2(chevron_x + 1.0, chevron_y),
+        ],
+        chevron,
+    );
+    ui.painter().line_segment(
+        [
+            pos2(chevron_x + 1.0, chevron_y),
+            pos2(chevron_x - 3.0, chevron_y + 4.0),
+        ],
+        chevron,
+    );
+
+    response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 fn modal_frame(palette: &Palette) -> Frame {

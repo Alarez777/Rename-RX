@@ -5,8 +5,8 @@ Rename RX is a native batch file renamer for Linux, written in Rust with
 It is a reimplementation of the macOS app **Rename X**, with an Adwaita-style
 interface that follows the system light/dark preference.
 
-> Status: Phase 3 plus Keep, Move and per-rule option sheets for Replace,
-> Regular Expression and Serialize. Date/Time and Part are next.
+> Status: Phase 3 plus Keep, Move, presets and per-rule option sheets for
+> Replace, Regular Expression and Serialize. Date/Time and Part are next.
 
 ## Requirements
 
@@ -38,6 +38,10 @@ section updates or removes it.
 and Dolphin for any file. Nautilus requires `python3-nautilus` (Debian/Ubuntu)
 or `nautilus-python` (Fedora/Arch); restart Nautilus or Thunar after changes.
 Use Update if the application moves.
+
+**Presets**, next to Validity, saves the complete rule configuration under a
+name. Select a preset and use Load (or double-click it); Delete asks for
+confirmation. Presets are stored in `~/.config/rename-rx/presets.json`.
 
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings
