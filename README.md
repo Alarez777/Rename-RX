@@ -29,6 +29,10 @@ maximize/restore controls. Drag any empty part of it to move the window, or
 double-click to maximize. **Settings → Window** keeps `Automatic` or pins
 `GNOME (Adwaita)`; other platform styles are planned.
 
+**Settings → Desktop integration** installs a user-level launcher and icon so
+GNOME Shell groups every Rename RX window under the correct dock icon. The same
+section updates or removes it.
+
 **Settings → File manager** can add a Nemo context-menu entry for any file,
 shown as “Rename with Rename RX” or “Renombrar con Rename RX” depending on the
 system language. The same section removes it again, or updates it if the

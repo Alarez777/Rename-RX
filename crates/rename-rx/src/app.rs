@@ -42,7 +42,7 @@ struct PreviewCache {
     dirty: bool,
 }
 
-struct NemoNotice {
+struct Notice {
     text: String,
     error: bool,
 }
@@ -112,7 +112,8 @@ pub struct RenameRxApp {
     about_open: bool,
     validation_open: bool,
     rule_settings: Option<RuleSettings>,
-    nemo_notice: Option<NemoNotice>,
+    nemo_notice: Option<Notice>,
+    desktop_notice: Option<Notice>,
 }
 
 impl RenameRxApp {
@@ -153,6 +154,7 @@ impl RenameRxApp {
             validation_open: false,
             rule_settings: None,
             nemo_notice: None,
+            desktop_notice: None,
         };
 
         app.add_paths(initial_paths);
@@ -1305,7 +1307,10 @@ impl RenameRxApp {
         let mut open = self.settings_open;
         let mut preference = self.settings.theme;
         let mut window_controls = self.settings.window_controls;
+        let desktop_state = crate::desktop::state();
+        let legacy_launcher = crate::desktop::legacy_launcher();
         let nemo_state = crate::nemo::state();
+        let mut desktop_notice = self.desktop_notice.take();
         let mut nemo_notice = self.nemo_notice.take();
 
         let modal = egui::Modal::new(egui::Id::unique("settings_modal"))
@@ -1380,6 +1385,82 @@ impl RenameRxApp {
                             .size(12.0)
                             .color(palette.secondary),
                         );
+
+                        ui.add_space(18.0);
+                        ui.label(
+                            RichText::new("Desktop integration")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
+
+                            match &desktop_state {
+                                Some(state) if state.current => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("Applications menu entry installed.")
+                                                .size(12.5)
+                                                .color(palette.secondary),
+                                        );
+                                        if ui.button("Remove").clicked() {
+                                            desktop_notice = Some(remove_desktop_notice());
+                                        }
+                                    });
+                                }
+                                Some(_) => {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Update Desktop Entry").clicked() {
+                                            desktop_notice = Some(install_desktop_notice());
+                                        }
+                                        if ui.button("Remove").clicked() {
+                                            desktop_notice = Some(remove_desktop_notice());
+                                        }
+                                    });
+                                }
+                                None => {
+                                    if ui.button("Add to Applications Menu").clicked() {
+                                        desktop_notice = Some(install_desktop_notice());
+                                    }
+                                }
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Adds the Rename RX icon and launcher so GNOME groups its \
+                                 windows under one icon. Use Update after moving the AppImage.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
+
+                        if let Some(notice) = &desktop_notice {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(&notice.text).size(12.0).color(
+                                if notice.error {
+                                    palette.danger
+                                } else {
+                                    palette.secondary
+                                },
+                            ));
+                        }
+
+                        if legacy_launcher.is_some() {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("An older launcher entry was found.")
+                                        .size(12.0)
+                                        .color(palette.secondary),
+                                );
+                                if ui.button("Remove Old Launcher").clicked() {
+                                    desktop_notice = Some(remove_legacy_launcher_notice());
+                                }
+                            });
+                        }
 
                         ui.add_space(18.0);
                         ui.label(
@@ -1470,6 +1551,7 @@ impl RenameRxApp {
 
         self.settings_open = open;
         self.nemo_notice = if open { nemo_notice } else { None };
+        self.desktop_notice = if open { desktop_notice } else { None };
 
         if preference != self.settings.theme {
             self.settings.theme = preference;
@@ -2668,27 +2750,68 @@ fn paint_type_cell(ui: &mut Ui, extension: &str, palette: &Palette) {
     ui.label(RichText::new(label).size(12.0).color(palette.secondary));
 }
 
-fn install_nemo_notice() -> NemoNotice {
+fn install_nemo_notice() -> Notice {
     match crate::nemo::install() {
-        Ok(_) => NemoNotice {
+        Ok(_) => Notice {
             text: "Added to Nemo's context menu.".to_owned(),
             error: false,
         },
-        Err(error) => NemoNotice {
+        Err(error) => Notice {
             text: format!("Could not add the Nemo action: {error}"),
             error: true,
         },
     }
 }
 
-fn remove_nemo_notice() -> NemoNotice {
+fn remove_nemo_notice() -> Notice {
     match crate::nemo::remove() {
-        Ok(()) => NemoNotice {
+        Ok(()) => Notice {
             text: "Removed the Nemo action.".to_owned(),
             error: false,
         },
-        Err(error) => NemoNotice {
+        Err(error) => Notice {
             text: format!("Could not remove the Nemo action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn install_desktop_notice() -> Notice {
+    match crate::desktop::install() {
+        Ok(_) => Notice {
+            text: "Added to the applications menu. Close and reopen Rename RX to refresh \
+                   the dock icon."
+                .to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not add the desktop entry: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn remove_desktop_notice() -> Notice {
+    match crate::desktop::remove() {
+        Ok(()) => Notice {
+            text: "Removed the desktop entry.".to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not remove the desktop entry: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn remove_legacy_launcher_notice() -> Notice {
+    match crate::desktop::remove_legacy_launcher() {
+        Ok(()) => Notice {
+            text: "Removed the old launcher entry.".to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not remove the old launcher: {error}"),
             error: true,
         },
     }

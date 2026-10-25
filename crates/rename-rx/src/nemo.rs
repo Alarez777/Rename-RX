@@ -19,7 +19,7 @@ pub struct NemoActionState {
 pub fn state() -> Option<NemoActionState> {
     let path = action_path()?;
     let contents = fs::read_to_string(path).ok()?;
-    let current = launcher()
+    let current = crate::integration::launcher()
         .and_then(|launcher| exec_line(&launcher).ok())
         .is_some_and(|expected| {
             contents
@@ -33,8 +33,8 @@ pub fn state() -> Option<NemoActionState> {
 pub fn install() -> Result<PathBuf, String> {
     let directory = actions_directory()
         .ok_or_else(|| "Could not determine the user data directory.".to_owned())?;
-    let launcher =
-        launcher().ok_or_else(|| "Could not locate the Rename RX executable.".to_owned())?;
+    let launcher = crate::integration::launcher()
+        .ok_or_else(|| "Could not locate the Rename RX executable.".to_owned())?;
 
     write_action(&directory, &launcher)
 }
@@ -64,24 +64,6 @@ fn actions_directory() -> Option<PathBuf> {
 
 fn action_path() -> Option<PathBuf> {
     Some(actions_directory()?.join(ACTION_FILE_NAME))
-}
-
-/// The file Nemo should launch. When running as an AppImage, `APPIMAGE`
-/// points at the outer file; `current_exe` would point inside the temporary
-/// mount and disappear when the app exits.
-fn launcher() -> Option<PathBuf> {
-    let candidate = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .filter(|path| path.is_file())
-        .or_else(|| std::env::current_exe().ok().filter(|path| path.is_file()))?;
-
-    if candidate.is_absolute() {
-        Some(candidate)
-    } else {
-        std::env::current_dir()
-            .ok()
-            .map(|directory| directory.join(candidate))
-    }
 }
 
 fn write_action(directory: &Path, launcher: &Path) -> Result<PathBuf, String> {

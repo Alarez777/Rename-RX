@@ -2,8 +2,9 @@
 Type=Application
 Name=Rename RX
 Comment=Batch file renamer for Linux
-Exec=rename-rx
-Icon=rename-rx
+Exec=rename-rx %F
+Icon=io.github.alarez777.RenameRX
 Terminal=false
 Categories=Utility;FileTools;
 StartupNotify=true
+StartupWMClass=io.github.alarez777.RenameRX

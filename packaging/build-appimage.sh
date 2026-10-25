@@ -30,9 +30,11 @@ fi
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin"
 install -m 0755 "$BINARY" "$APPDIR/usr/bin/rename-rx"
-install -m 0644 "$ROOT/packaging/rename-rx.desktop" "$APPDIR/rename-rx.desktop"
-install -m 0644 "$ROOT/assets/rename-rx.svg" "$APPDIR/rename-rx.svg"
-cp "$APPDIR/rename-rx.svg" "$APPDIR/.DirIcon"
+install -m 0644 "$ROOT/packaging/io.github.alarez777.RenameRX.desktop" \
+    "$APPDIR/io.github.alarez777.RenameRX.desktop"
+install -m 0644 "$ROOT/assets/rename-rx.svg" \
+    "$APPDIR/io.github.alarez777.RenameRX.svg"
+cp "$APPDIR/io.github.alarez777.RenameRX.svg" "$APPDIR/.DirIcon"
 
 cat > "$APPDIR/AppRun" <<'EOF'
 #!/bin/sh
