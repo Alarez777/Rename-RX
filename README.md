@@ -33,10 +33,15 @@ double-click to maximize. **Settings → Window** keeps `Automatic` or pins
 GNOME Shell groups every Rename RX window under the correct dock icon. The same
 section updates or removes it.
 
-**Settings → File manager** can add a Nemo context-menu entry for any file,
-shown as “Rename with Rename RX” or “Renombrar con Rename RX” depending on the
-system language. The same section removes it again, or updates it if the
-application moved.
+**Settings → Nemo** can add a Nemo context-menu entry for any file, shown as
+“Rename with Rename RX” or “Renombrar con Rename RX” depending on the system
+language. The same section removes it again, or updates it if the application
+moved.
+
+**Settings → Nautilus** adds the equivalent entry to Nautilus through a
+`nautilus-python` extension. It requires `python3-nautilus` (Debian/Ubuntu) or
+`nautilus-python` (Fedora/Arch); restart Nautilus with `nautilus --quit` after
+adding or updating it.
 
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings

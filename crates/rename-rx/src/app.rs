@@ -114,6 +114,7 @@ pub struct RenameRxApp {
     rule_settings: Option<RuleSettings>,
     nemo_notice: Option<Notice>,
     desktop_notice: Option<Notice>,
+    nautilus_notice: Option<Notice>,
 }
 
 impl RenameRxApp {
@@ -155,6 +156,7 @@ impl RenameRxApp {
             rule_settings: None,
             nemo_notice: None,
             desktop_notice: None,
+            nautilus_notice: None,
         };
 
         app.add_paths(initial_paths);
@@ -1310,8 +1312,11 @@ impl RenameRxApp {
         let desktop_state = crate::desktop::state();
         let legacy_launcher = crate::desktop::legacy_launcher();
         let nemo_state = crate::nemo::state();
+        let nautilus_state = crate::nautilus::state();
+        let nautilus_python = crate::nautilus::python_support_available();
         let mut desktop_notice = self.desktop_notice.take();
         let mut nemo_notice = self.nemo_notice.take();
+        let mut nautilus_notice = self.nautilus_notice.take();
 
         let modal = egui::Modal::new(egui::Id::unique("settings_modal"))
             .frame(modal_frame(&palette))
@@ -1427,16 +1432,6 @@ impl RenameRxApp {
                                 }
                             }
                         });
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Adds the Rename RX icon and launcher so GNOME groups its \
-                                 windows under one icon. Use Update after moving the AppImage.",
-                            )
-                            .size(12.0)
-                            .color(palette.secondary),
-                        );
-
                         if let Some(notice) = &desktop_notice {
                             ui.add_space(4.0);
                             ui.label(RichText::new(&notice.text).size(12.0).color(
@@ -1447,6 +1442,16 @@ impl RenameRxApp {
                                 },
                             ));
                         }
+
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Adds the Rename RX icon and launcher so GNOME groups its \
+                                 windows under one icon. Use Update after moving the AppImage.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
 
                         if legacy_launcher.is_some() {
                             ui.add_space(6.0);
@@ -1464,7 +1469,7 @@ impl RenameRxApp {
 
                         ui.add_space(18.0);
                         ui.label(
-                            RichText::new("File manager")
+                            RichText::new("Nemo")
                                 .font(FontId::new(13.0, semibold()))
                                 .color(palette.secondary),
                         );
@@ -1503,6 +1508,17 @@ impl RenameRxApp {
                                 }
                             }
                         });
+                        if let Some(notice) = &nemo_notice {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(&notice.text).size(12.0).color(
+                                if notice.error {
+                                    palette.danger
+                                } else {
+                                    palette.secondary
+                                },
+                            ));
+                        }
+
                         ui.add_space(4.0);
                         ui.label(
                             RichText::new(
@@ -1514,7 +1530,73 @@ impl RenameRxApp {
                             .color(palette.secondary),
                         );
 
-                        if let Some(notice) = &nemo_notice {
+                        ui.add_space(18.0);
+                        ui.label(
+                            RichText::new("Nautilus")
+                                .font(FontId::new(13.0, semibold()))
+                                .color(palette.secondary),
+                        );
+                        ui.add_space(6.0);
+
+                        if !nautilus_python {
+                            ui.label(
+                                RichText::new(
+                                    "Nautilus Python extensions are not installed. Install \
+                                     python3-nautilus (Debian/Ubuntu) or nautilus-python \
+                                     (Fedora/Arch) first.",
+                                )
+                                .size(12.0)
+                                .color(palette.warning),
+                            );
+                            ui.add_space(6.0);
+                        }
+
+                        ui.scope(|ui| {
+                            style_controls(ui, &palette);
+
+                            match &nautilus_state {
+                                Some(state) if state.current => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("Nautilus action installed.")
+                                                .size(12.5)
+                                                .color(palette.secondary),
+                                        );
+                                        if ui.button("Remove").clicked() {
+                                            nautilus_notice = Some(remove_nautilus_notice());
+                                        }
+                                    });
+                                }
+                                Some(_) => {
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add_enabled(
+                                                nautilus_python,
+                                                Button::new("Update Nautilus Action"),
+                                            )
+                                            .clicked()
+                                        {
+                                            nautilus_notice = Some(install_nautilus_notice());
+                                        }
+                                        if ui.button("Remove").clicked() {
+                                            nautilus_notice = Some(remove_nautilus_notice());
+                                        }
+                                    });
+                                }
+                                None => {
+                                    if ui
+                                        .add_enabled(
+                                            nautilus_python,
+                                            Button::new("Add Nautilus Action"),
+                                        )
+                                        .clicked()
+                                    {
+                                        nautilus_notice = Some(install_nautilus_notice());
+                                    }
+                                }
+                            }
+                        });
+                        if let Some(notice) = &nautilus_notice {
                             ui.add_space(4.0);
                             ui.label(RichText::new(&notice.text).size(12.0).color(
                                 if notice.error {
@@ -1524,6 +1606,17 @@ impl RenameRxApp {
                                 },
                             ));
                         }
+
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Adds “Rename with Rename RX” to Nautilus' right-click menu \
+                                 for any file. Restart Nautilus (nautilus --quit) \
+                                 after adding or updating it.",
+                            )
+                            .size(12.0)
+                            .color(palette.secondary),
+                        );
                     });
 
                 ui.add_space(20.0);
@@ -1552,6 +1645,7 @@ impl RenameRxApp {
         self.settings_open = open;
         self.nemo_notice = if open { nemo_notice } else { None };
         self.desktop_notice = if open { desktop_notice } else { None };
+        self.nautilus_notice = if open { nautilus_notice } else { None };
 
         if preference != self.settings.theme {
             self.settings.theme = preference;
@@ -2812,6 +2906,34 @@ fn remove_legacy_launcher_notice() -> Notice {
         },
         Err(error) => Notice {
             text: format!("Could not remove the old launcher: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn install_nautilus_notice() -> Notice {
+    match crate::nautilus::install() {
+        Ok(_) => Notice {
+            text: "Added to Nautilus. Run nautilus --quit and reopen it to load the action."
+                .to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not add the Nautilus action: {error}"),
+            error: true,
+        },
+    }
+}
+
+fn remove_nautilus_notice() -> Notice {
+    match crate::nautilus::remove() {
+        Ok(()) => Notice {
+            text: "Removed from Nautilus. Run nautilus --quit and reopen it to unload it."
+                .to_owned(),
+            error: false,
+        },
+        Err(error) => Notice {
+            text: format!("Could not remove the Nautilus action: {error}"),
             error: true,
         },
     }

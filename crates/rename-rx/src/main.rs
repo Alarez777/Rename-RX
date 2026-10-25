@@ -1,6 +1,7 @@
 mod app;
 mod desktop;
 mod integration;
+mod nautilus;
 mod nemo;
 mod settings;
 mod theme;
