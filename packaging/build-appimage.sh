@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Build a test AppImage for Rename RX.
+# Build a Rename RX AppImage.
 #
-# By default this builds a release binary on the host. Set
-# RENAME_RX_SKIP_BUILD=1 and RENAME_RX_BINARY=/path/to/rename-rx to package a
+# By default this builds a release binary for the host architecture. Set
+# RENAME_RX_ARCH=aarch64 to package an ARM64 binary, and use
+# RENAME_RX_SKIP_BUILD=1 / RENAME_RX_BINARY=/path/to/rename-rx to package a
 # binary built elsewhere (for example in an older container for wider glibc
 # compatibility).
 
@@ -12,10 +13,32 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 APPDIR="$DIST/Rename_RX.AppDir"
-OUTPUT="$DIST/Rename_RX-x86_64.AppImage"
+TARGET_ARCH="${RENAME_RX_ARCH:-x86_64}"
+OUTPUT="$DIST/Rename_RX-${TARGET_ARCH}.AppImage"
+UPDATE_INFORMATION="${RENAME_RX_UPDATE_INFORMATION:-gh-releases-zsync|Alarez777|Rename-RX|latest|Rename_RX-${TARGET_ARCH}.AppImage.zsync}"
 TOOLS="$DIST/.tools"
-APPIMAGETOOL="$TOOLS/appimagetool-x86_64.AppImage"
-APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage}"
+case "$(uname -m)" in
+    x86_64)
+        TOOL_ARCH="x86_64"
+        ;;
+    aarch64|arm64)
+        TOOL_ARCH="aarch64"
+        ;;
+    *)
+        echo "error: unsupported host architecture: $(uname -m)" >&2
+        exit 1
+        ;;
+esac
+APPIMAGETOOL="$TOOLS/appimagetool-${TOOL_ARCH}.AppImage"
+APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${TOOL_ARCH}.AppImage}"
+
+case "$TARGET_ARCH" in
+    x86_64|aarch64) ;;
+    *)
+        echo "error: unsupported architecture: $TARGET_ARCH (use x86_64 or aarch64)" >&2
+        exit 1
+        ;;
+esac
 
 if [[ -z "${RENAME_RX_SKIP_BUILD:-}" ]]; then
     cargo build --locked --release -p rename-rx --manifest-path "$ROOT/Cargo.toml"
@@ -50,10 +73,15 @@ if [[ ! -x "$APPIMAGETOOL" ]]; then
     chmod 0755 "$APPIMAGETOOL"
 fi
 
-rm -f "$OUTPUT"
-ARCH=x86_64 "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$OUTPUT"
+rm -f "$OUTPUT" "$OUTPUT.zsync"
+ARCH="$TARGET_ARCH" "$APPIMAGETOOL" --appimage-extract-and-run \
+    -u "$UPDATE_INFORMATION" "$APPDIR" "$OUTPUT"
 chmod 0755 "$OUTPUT"
 
 echo
 echo "AppImage: $OUTPUT"
 ls -lh "$OUTPUT"
+if [[ -f "$OUTPUT.zsync" ]]; then
+    echo "zsync:   $OUTPUT.zsync"
+    ls -lh "$OUTPUT.zsync"
+fi

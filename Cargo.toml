@@ -7,7 +7,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Alarez777"]
-repository = "https://github.com/Alarez777/rename-rx"
+license = "MIT"
+repository = "https://github.com/Alarez777/Rename-RX"
 
 [workspace.dependencies]
 chrono = "0.4"
