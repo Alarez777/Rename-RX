@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: AppImage ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: rust:1.98-bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            pkg-config \
+            libx11-dev \
+            libxkbcommon-dev \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            zsync \
+            file
+
+      - name: Build and package AppImage
+        env:
+          RENAME_RX_ARCH: ${{ matrix.arch }}
+        run: ./packaging/build-appimage.sh
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: |
+            dist/Rename_RX-${{ matrix.arch }}.AppImage
+            dist/Rename_RX-${{ matrix.arch }}.AppImage.zsync
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: appimage-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum Rename_RX-*.AppImage Rename_RX-*.AppImage.zsync > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/Rename_RX-x86_64.AppImage \
+            dist/Rename_RX-x86_64.AppImage.zsync \
+            dist/Rename_RX-aarch64.AppImage \
+            dist/Rename_RX-aarch64.AppImage.zsync \
+            dist/SHA256SUMS \
+            --title "Rename RX ${GITHUB_REF_NAME#v}" \
+            --notes-file .github/release-notes.md \
+            --latest

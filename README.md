@@ -1,102 +1,181 @@
 # Rename RX
 
-Rename RX is a native batch file renamer for Linux, written in Rust with
-[egui](https://github.com/emilk/egui)/[eframe](https://github.com/emilk/egui/tree/main/crates/eframe).
-It is a reimplementation of the macOS app **Rename X**, with an Adwaita-style
-interface that follows the system light/dark preference.
+Rename RX is a **lightweight, fast batch file renamer for Linux**, written in
+Rust with [egui](https://github.com/emilk/egui) and
+[eframe](https://github.com/emilk/egui/tree/main/crates/eframe). It is inspired
+by the workflow of **Rename X** for macOS: a compact window, one list of rules,
+and a live preview of every new name.
 
-> Status: Phase 3 plus Keep, Move, presets and per-rule option sheets for
-> Replace, Regular Expression and Serialize. Date/Time and Part are next.
+The interface follows the system light/dark preference and uses Adwaita-style
+widgets and a custom headerbar.
 
-## Requirements
+## Download
+
+Grab the AppImage for your architecture from the
+[latest release](https://github.com/Alarez777/Rename-RX/releases/latest):
+
+- `Rename_RX-x86_64.AppImage` — Intel/AMD 64-bit
+- `Rename_RX-aarch64.AppImage` — ARM 64-bit
+
+```sh
+chmod +x Rename_RX-x86_64.AppImage
+./Rename_RX-x86_64.AppImage
+```
+
+If FUSE is not available:
+
+```sh
+./Rename_RX-x86_64.AppImage --appimage-extract-and-run
+```
+
+The AppImages are built on Debian 12 and need glibc **2.35 or newer**.
+
+### Automatic updates
+
+Each AppImage embeds its update information, and every release ships the
+matching `.zsync` file. Tools compatible with AppImageUpdate
+([AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate),
+Gear Lever, etc.) can download only the changed blocks and update in place.
+
+Rename RX does not yet include its own “check for updates” button; updates are
+handled by those external tools.
+
+## Features
+
+### Batch workflow
+
+- Add files with the picker, drag and drop, or command-line arguments.
+- Multi-select with click, `Ctrl`/`Cmd`+click and `Shift`+click.
+- Live preview of every resulting file name.
+- Validity report with errors and warnings; errors block renaming.
+- Transactional rename: all changes are staged, then applied, with rollback on
+  failure.
+- One-level undo through `Ctrl+Z` or **Undo Rename** in the menu.
+
+### Rename rules
+
+Rules are applied from top to bottom, with per-rule options where needed:
+
+- New Name
+- Replace (case-sensitive and whole-word options)
+- Regular Expression (ignore-case option, capture groups)
+- Insert (before/after, counted from either end)
+- Keep (keep a range of characters)
+- Remove (remove a range of characters)
+- Move (move a range to another position)
+- Serialize (start, step, offset, padding, prefix/suffix, before/after)
+- Prefix
+- Suffix
+- Extension
+- Case (lowercase, title case, uppercase)
+- Sort (original order, name, created, modified; ascending/descending)
+
+The live preview uses the same pipeline as the actual rename.
+
+### Presets
+
+The **Presets** view saves the complete rule configuration under a name:
+
+- Select a preset and click **Load**, or double-click it.
+- **Delete** asks for confirmation.
+- Presets are stored in `~/.config/rename-rx/presets.json` and stay compatible
+  when new rules are added.
+
+### Desktop and file managers
+
+- **Settings → Desktop integration** installs a user-level launcher and icon so
+  GNOME groups Rename RX windows under the correct dock icon.
+- **Settings → File manager integration** adds a “Rename with Rename RX” /
+  “Renombrar con Rename RX” entry for:
+
+  - Nemo
+  - Nautilus (requires `python3-nautilus` / `nautilus-python`)
+  - Thunar
+  - Dolphin
+
+### Appearance
+
+- Adwaita-style dark and light themes, or follow the system preference.
+- Custom Adwaita headerbar with minimize, maximize/restore, close, dragging and
+  resize edges.
+- Window style selector ready for future platform-specific styles.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+O` | Add files |
+| `Ctrl+A` | Select all files |
+| `Delete` | Remove selected files from the list |
+| `Ctrl+Enter` | Rename |
+| `Ctrl+Z` | Undo the last rename |
+| `Escape` | Close the active dialog / leave the field |
+
+## Run from source
+
+Requirements:
 
 - Rust 1.98 or newer
 - Linux with X11 or Wayland, and OpenGL
-
-## Run
 
 ```sh
 cargo run -p rename-rx
 cargo run -p rename-rx -- path/to/file1 path/to/file2
 ```
 
-You can also drag files onto the window or press `Ctrl+O`. Select rows with a
-click, `Ctrl`/`Cmd`+click, or `Shift`+click. `Delete` removes the selected
-entries and `Ctrl+A` selects all of them.
-
-The window uses an Adwaita-style headerbar with close, minimize and
-maximize/restore controls. Drag any empty part of it to move the window, or
-double-click to maximize. **Settings → Window** keeps `Automatic` or pins
-`GNOME (Adwaita)`; other platform styles are planned.
-
-**Settings → Desktop integration** installs a user-level launcher and icon so
-GNOME Shell groups every Rename RX window under the correct dock icon. The same
-section updates or removes it.
-
-**Settings → File manager integration** can add a “Rename with Rename RX” /
-“Renombrar con Rename RX” entry to the context menu of Nemo, Nautilus, Thunar
-and Dolphin for any file. Nautilus requires `python3-nautilus` (Debian/Ubuntu)
-or `nautilus-python` (Fedora/Arch); restart Nautilus or Thunar after changes.
-Use Update if the application moves.
-
-**Presets**, next to Validity, saves the complete rule configuration under a
-name. Select a preset and use Load (or double-click it); Delete asks for
-confirmation. Presets are stored in `~/.config/rename-rx/presets.json`.
-
-The rules panel applies every checked rule to the live preview. `Validity`
-opens the report of errors and warnings; errors block renaming and warnings
-ask for confirmation. `Rename` (`Ctrl+Enter`) stages every change in the same
-directory and rolls back on failure. The last successful rename can be undone
-with `Ctrl+Z` or **Undo Rename** in the menu.
-
-## Build a test AppImage
+## Build an AppImage
 
 ```sh
 ./packaging/build-appimage.sh
 ```
 
-The result is `dist/Rename_RX-x86_64.AppImage`. The script builds a release
-binary and downloads `appimagetool` into `dist/.tools` on the first run. A
-minimal desktop entry and icon are embedded only because `appimagetool`
-requires them; they are not installed on the system.
-
-The default build uses the host toolchain, so its glibc requirement matches
-the host. The AppImage in this repository was built with Debian 12
-(glibc 2.35); to reproduce that, build the binary in Debian 12 and pass it
-with `RENAME_RX_BINARY`.
-
-If your system does not have FUSE, extract and run it:
+The script builds a release binary on the host and downloads `appimagetool`
+into `dist/.tools` on the first run. To package a binary built elsewhere (for
+example in Debian 12 for older glibc compatibility):
 
 ```sh
-./dist/Rename_RX-x86_64.AppImage --appimage-extract-and-run
+RENAME_RX_SKIP_BUILD=1 \
+RENAME_RX_BINARY=/path/to/rename-rx \
+RENAME_RX_ARCH=x86_64 \
+./packaging/build-appimage.sh
 ```
 
-To package a binary built elsewhere (for example in an older container for
-wider glibc compatibility):
+For ARM:
 
 ```sh
-RENAME_RX_SKIP_BUILD=1 RENAME_RX_BINARY=/path/to/rename-rx \
-  ./packaging/build-appimage.sh
+RENAME_RX_SKIP_BUILD=1 \
+RENAME_RX_BINARY=/path/to/rename-rx-aarch64 \
+RENAME_RX_ARCH=aarch64 \
+./packaging/build-appimage.sh
 ```
+
+The packaged AppImages are written to `dist/` together with their `.zsync`
+files.
 
 ## Workspace
 
 | Crate | Purpose |
 | --- | --- |
-| `crates/rename-rx` | egui/eframe application, Adwaita theme, dialogs, file table |
+| `crates/rename-rx` | egui/eframe application, Adwaita theme, dialogs, file table, presets |
 | `crates/rename-rx-core` | UI-independent file model, rules, preview, validation and rename transaction |
 
 ## Roadmap
 
-- [x] Phase 0 — window shell, Adwaita light/dark theme, system theme detection,
-      Settings and About dialogs
-- [x] Phase 1 — Add Files, drag and drop, file table, selection, keyboard shortcuts
-- [x] Phase 2 — rule engine, live preview, validity report
-- [x] Phase 3 — transactional rename with undo
-- [ ] Phase 4 — Date/Time, Part and the remaining per-rule settings
-- [ ] Phase 5 — polish and accessibility
-- [ ] Phase 6 — AppImage packaging and release CI
+- [x] Window shell, Adwaita light/dark theme, system theme detection
+- [x] File selection, drag and drop, table, selection and shortcuts
+- [x] Rule engine, live preview, validity report
+- [x] Transactional rename with undo
+- [x] Keep and Move rules
+- [x] Presets
+- [x] Desktop and file-manager integration
+- [x] x86_64 and aarch64 AppImages with zsync updates
+- [ ] Date/Time and Part rules
+- [ ] Further polish and accessibility
+- [ ] Automated release pipeline
 
 ## License
 
-Not chosen yet.
+MIT — see [LICENSE](LICENSE).
+
+Rename RX is an independent project inspired by Rename X for macOS and is not
+affiliated with its author.
