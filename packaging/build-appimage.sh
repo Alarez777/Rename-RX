@@ -78,10 +78,18 @@ ARCH="$TARGET_ARCH" "$APPIMAGETOOL" --appimage-extract-and-run \
     -u "$UPDATE_INFORMATION" "$APPDIR" "$OUTPUT"
 chmod 0755 "$OUTPUT"
 
+# appimagetool/zsyncmake writes the zsync file in the current directory,
+# while the AppImage goes to $DIST. Keep both release assets together.
+ZSYNC_GENERATED="$PWD/$(basename "$OUTPUT").zsync"
+if [[ ! -f "$OUTPUT.zsync" && -f "$ZSYNC_GENERATED" ]]; then
+    mv "$ZSYNC_GENERATED" "$OUTPUT.zsync"
+fi
+if [[ ! -f "$OUTPUT.zsync" ]]; then
+    echo "error: appimagetool did not generate $(basename "$OUTPUT").zsync" >&2
+    exit 1
+fi
+
 echo
 echo "AppImage: $OUTPUT"
-ls -lh "$OUTPUT"
-if [[ -f "$OUTPUT.zsync" ]]; then
-    echo "zsync:   $OUTPUT.zsync"
-    ls -lh "$OUTPUT.zsync"
-fi
+echo "zsync:   $OUTPUT.zsync"
+ls -lh "$OUTPUT" "$OUTPUT.zsync"
