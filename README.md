@@ -40,8 +40,8 @@ or `nautilus-python` (Fedora/Arch); restart Nautilus or Thunar after changes.
 Use Update if the application moves.
 
 **Presets**, next to Validity, saves the complete rule configuration under a
-name. Double-click a preset to load it, or delete it with confirmation. Presets
-are stored in `~/.config/rename-rx/presets.json`.
+name. Select a preset and use Load (or double-click it); Delete asks for
+confirmation. Presets are stored in `~/.config/rename-rx/presets.json`.
 
 The rules panel applies every checked rule to the live preview. `Validity`
 opens the report of errors and warnings; errors block renaming and warnings

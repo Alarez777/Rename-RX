@@ -1773,6 +1773,13 @@ impl RenameRxApp {
 
                     let has_selection = self.preset_selected.is_some();
                     if ui
+                        .add_enabled(has_selection, Button::new("Load"))
+                        .on_disabled_hover_text("Select a preset first")
+                        .clicked()
+                    {
+                        load_name = self.preset_selected.clone();
+                    }
+                    if ui
                         .add_enabled(has_selection, Button::new("Delete"))
                         .on_disabled_hover_text("Select a preset first")
                         .clicked()
@@ -1871,13 +1878,14 @@ impl RenameRxApp {
                                 if response.double_clicked() {
                                     load_name = Some(preset.name.clone());
                                 }
+                                ui.add_space(4.0);
                             }
                         }
                     });
 
                 ui.add_space(8.0);
                 ui.label(
-                    RichText::new("Double-click a preset to load it.")
+                    RichText::new("Select a preset and click Load, or double-click it.")
                         .size(12.0)
                         .color(palette.secondary),
                 );
@@ -3355,25 +3363,60 @@ fn remove_dolphin_notice() -> Notice {
 }
 
 fn preset_row(ui: &mut Ui, name: &str, selected: bool, palette: &Palette) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
 
-    if selected {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(5), palette.selection);
+    let fill = if selected {
+        palette.selection
     } else if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(5), palette.button_hover);
-    }
+        palette.button_hover
+    } else {
+        palette.input
+    };
+    let border = if selected {
+        palette.accent
+    } else {
+        palette.border
+    };
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(7),
+        fill,
+        Stroke::new(if selected { 1.5 } else { 1.0 }, border),
+        StrokeKind::Inside,
+    );
 
     ui.painter().text(
-        pos2(rect.left() + 8.0, rect.center().y),
+        pos2(rect.left() + 12.0, rect.center().y),
         Align2::LEFT_CENTER,
         name,
         FontId::proportional(13.5),
         palette.text,
     );
 
-    response
+    let chevron_color = if selected {
+        palette.accent
+    } else {
+        palette.secondary
+    };
+    let chevron_x = rect.right() - 15.0;
+    let chevron_y = rect.center().y;
+    let chevron = Stroke::new(1.4, chevron_color);
+    ui.painter().line_segment(
+        [
+            pos2(chevron_x - 3.0, chevron_y - 4.0),
+            pos2(chevron_x + 1.0, chevron_y),
+        ],
+        chevron,
+    );
+    ui.painter().line_segment(
+        [
+            pos2(chevron_x + 1.0, chevron_y),
+            pos2(chevron_x - 3.0, chevron_y + 4.0),
+        ],
+        chevron,
+    );
+
+    response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 fn modal_frame(palette: &Palette) -> Frame {
