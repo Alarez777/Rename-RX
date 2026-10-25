@@ -12,6 +12,7 @@ pub struct RuleSet {
     pub replace: ReplaceRule,
     pub regex: RegexRule,
     pub insert: InsertRule,
+    pub keep: KeepRule,
     pub remove: RemoveRule,
     pub serialize: SerializeRule,
     pub prefix: TextRule,
@@ -29,6 +30,7 @@ impl RuleSet {
             || self.replace.enabled
             || self.regex.enabled
             || self.insert.enabled
+            || self.keep.enabled
             || self.remove.enabled
             || self.serialize.enabled
             || self.prefix.enabled
@@ -95,10 +97,30 @@ pub enum InsertAnchor {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+pub struct KeepRule {
+    pub enabled: bool,
+    pub count: u32,
+    pub origin: CharacterOrigin,
+    pub position: u32,
+}
+
+impl Default for KeepRule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            count: 1,
+            origin: CharacterOrigin::Before,
+            position: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RemoveRule {
     pub enabled: bool,
     pub count: u32,
-    pub origin: RemoveOrigin,
+    pub origin: CharacterOrigin,
     pub position: u32,
 }
 
@@ -109,7 +131,7 @@ impl Default for RemoveRule {
             // Zero characters would silently do nothing; the rule is meant to
             // be switched off instead.
             count: 1,
-            origin: RemoveOrigin::Before,
+            origin: CharacterOrigin::Before,
             position: 0,
         }
     }
@@ -117,7 +139,7 @@ impl Default for RemoveRule {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RemoveOrigin {
+pub enum CharacterOrigin {
     #[default]
     Before,
     After,
@@ -315,6 +337,15 @@ impl<'a> CompiledRules<'a> {
             );
         }
 
+        if self.rules.keep.enabled && self.rules.keep.count > 0 {
+            stem = keep_text(
+                &stem,
+                self.rules.keep.count as usize,
+                self.rules.keep.origin,
+                self.rules.keep.position as usize,
+            );
+        }
+
         if self.rules.remove.enabled && self.rules.remove.count > 0 {
             stem = remove_chars(
                 &stem,
@@ -393,16 +424,34 @@ fn insert_text(stem: &str, text: &str, position: usize, anchor: InsertAnchor) ->
     result
 }
 
-fn remove_chars(stem: &str, count: usize, origin: RemoveOrigin, position: usize) -> String {
+fn keep_text(stem: &str, count: usize, origin: CharacterOrigin, position: usize) -> String {
     let graphemes: Vec<&str> = stem.graphemes(true).collect();
     let len = graphemes.len();
 
     let (start, end) = match origin {
-        RemoveOrigin::Before => {
+        CharacterOrigin::Before => {
             let start = position.min(len);
             (start, start.saturating_add(count).min(len))
         }
-        RemoveOrigin::After => {
+        CharacterOrigin::After => {
+            let end = len.saturating_sub(position.min(len));
+            (end.saturating_sub(count), end)
+        }
+    };
+
+    graphemes[start..end].concat()
+}
+
+fn remove_chars(stem: &str, count: usize, origin: CharacterOrigin, position: usize) -> String {
+    let graphemes: Vec<&str> = stem.graphemes(true).collect();
+    let len = graphemes.len();
+
+    let (start, end) = match origin {
+        CharacterOrigin::Before => {
+            let start = position.min(len);
+            (start, start.saturating_add(count).min(len))
+        }
+        CharacterOrigin::After => {
             let end = len.saturating_sub(position.min(len));
             (end.saturating_sub(count), end)
         }
@@ -566,14 +615,74 @@ mod tests {
             insert_text(combined, "!", 1, InsertAnchor::After),
             "e\u{301}!x"
         );
-        assert_eq!(remove_chars("e\u{301}x", 1, RemoveOrigin::Before, 0), "x");
-        assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::Before, 1), "adef");
-        assert_eq!(remove_chars("abcdef", 0, RemoveOrigin::Before, 3), "abcdef");
-        assert_eq!(remove_chars("abc", 5, RemoveOrigin::Before, 1), "a");
-        assert_eq!(remove_chars("abc", 2, RemoveOrigin::Before, 99), "abc");
-        assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::After, 0), "abcd");
-        assert_eq!(remove_chars("abcdef", 2, RemoveOrigin::After, 1), "abcf");
-        assert_eq!(remove_chars("abc", 2, RemoveOrigin::After, 99), "abc");
+        assert_eq!(
+            remove_chars("e\u{301}x", 1, CharacterOrigin::Before, 0),
+            "x"
+        );
+        assert_eq!(
+            remove_chars("abcdef", 2, CharacterOrigin::Before, 1),
+            "adef"
+        );
+        assert_eq!(
+            remove_chars("abcdef", 0, CharacterOrigin::Before, 3),
+            "abcdef"
+        );
+        assert_eq!(remove_chars("abc", 5, CharacterOrigin::Before, 1), "a");
+        assert_eq!(remove_chars("abc", 2, CharacterOrigin::Before, 99), "abc");
+        assert_eq!(remove_chars("abcdef", 2, CharacterOrigin::After, 0), "abcd");
+        assert_eq!(remove_chars("abcdef", 2, CharacterOrigin::After, 1), "abcf");
+        assert_eq!(remove_chars("abc", 2, CharacterOrigin::After, 99), "abc");
+    }
+
+    #[test]
+    fn keep_defaults_to_one_character_from_the_start() {
+        let rule = KeepRule::default();
+        assert!(!rule.enabled);
+        assert_eq!(rule.count, 1);
+        assert_eq!(rule.origin, CharacterOrigin::Before);
+        assert_eq!(rule.position, 0);
+
+        let mut rules = RuleSet::default();
+        rules.keep.enabled = true;
+        assert!(rules.has_name_effects());
+    }
+
+    #[test]
+    fn keep_selects_characters_from_start_or_end() {
+        assert_eq!(keep_text("abcdef", 2, CharacterOrigin::Before, 0), "ab");
+        assert_eq!(keep_text("abcdef", 2, CharacterOrigin::Before, 2), "cd");
+        assert_eq!(keep_text("abcdef", 2, CharacterOrigin::After, 0), "ef");
+        assert_eq!(keep_text("abcdef", 2, CharacterOrigin::After, 2), "cd");
+        assert_eq!(
+            keep_text("abcdef", 99, CharacterOrigin::Before, 0),
+            "abcdef"
+        );
+        assert_eq!(keep_text("abcdef", 2, CharacterOrigin::Before, 99), "");
+        assert_eq!(keep_text("abcdef", 2, CharacterOrigin::After, 99), "");
+
+        let combined = "e\u{301}x";
+        assert_eq!(
+            keep_text(combined, 1, CharacterOrigin::Before, 0),
+            "e\u{301}"
+        );
+        assert_eq!(keep_text(combined, 1, CharacterOrigin::After, 0), "x");
+    }
+
+    #[test]
+    fn keep_runs_before_remove() {
+        let mut rules = RuleSet::default();
+        rules.new_name.enabled = true;
+        rules.new_name.value = "abcdef".to_owned();
+        rules.keep.enabled = true;
+        rules.keep.count = 3;
+        rules.keep.origin = CharacterOrigin::Before;
+        rules.keep.position = 1;
+        rules.remove.enabled = true;
+        rules.remove.count = 1;
+        rules.remove.origin = CharacterOrigin::Before;
+        rules.remove.position = 0;
+
+        assert_eq!(apply(&rules, "original.txt", 0), "cd.txt");
     }
 
     #[test]
@@ -594,7 +703,7 @@ mod tests {
 
         assert_eq!(apply(&rules, "abcdef.txt", 0), "adef.txt");
 
-        rules.remove.origin = RemoveOrigin::After;
+        rules.remove.origin = CharacterOrigin::After;
         rules.remove.position = 0;
         assert_eq!(apply(&rules, "abcdef.txt", 0), "abcd.txt");
     }

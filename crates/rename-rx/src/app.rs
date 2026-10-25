@@ -11,10 +11,10 @@ use eframe::egui::{
 };
 use egui_extras::{Column, TableBuilder};
 use rename_rx_core::{
-    CaseMode, CaseRule, ExtensionRule, FileEntry, FileId, InsertAnchor, InsertRule, NewNameRule,
-    RegexRule, RemoveOrigin, RemoveRule, RenameOutcome, RenameStep, ReplaceRule, RuleSet,
-    SerializePosition, SerializeRule, Severity, SortMethod, SortRule, TextRule, ValidationReport,
-    build_preview, execute as execute_rename, plan_steps,
+    CaseMode, CaseRule, CharacterOrigin, ExtensionRule, FileEntry, FileId, InsertAnchor,
+    InsertRule, KeepRule, NewNameRule, RegexRule, RemoveRule, RenameOutcome, RenameStep,
+    ReplaceRule, RuleSet, SerializePosition, SerializeRule, Severity, SortMethod, SortRule,
+    TextRule, ValidationReport, build_preview, execute as execute_rename, plan_steps,
 };
 
 use crate::settings::{self, Settings, ThemePreference, WindowControlsStyle};
@@ -730,7 +730,7 @@ impl RenameRxApp {
     fn rules_panel(&mut self, ui: &mut Ui) -> bool {
         let palette = self.palette();
         let content_height = ui.ctx().content_rect().height();
-        let default_height = (content_height * 0.56).clamp(220.0, 480.0);
+        let default_height = (content_height * 0.60).clamp(240.0, 500.0);
         let max_height = (content_height * 0.72).max(240.0);
         let mut changed = false;
         let mut open_settings = self.rule_settings;
@@ -798,6 +798,7 @@ impl RenameRxApp {
                             replace,
                             regex,
                             insert,
+                            keep,
                             remove,
                             serialize,
                             prefix,
@@ -884,6 +885,39 @@ impl RenameRxApp {
                             },
                         );
 
+                        let KeepRule {
+                            enabled,
+                            count,
+                            origin,
+                            position,
+                        } = keep;
+                        changed |= rule_row(
+                            ui,
+                            &palette,
+                            columns,
+                            "Keep",
+                            enabled,
+                            None,
+                            &mut open_settings,
+                            |ui| {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let mut row_changed =
+                                        spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
+                                    row_changed |=
+                                        combo_character_origin(ui, "keep_origin", origin);
+                                    row_changed |= rtl_labeled_spinbox_u32(
+                                        ui,
+                                        "Characters",
+                                        count,
+                                        1..=999,
+                                        SPINBOX_WIDTH,
+                                    );
+                                    row_changed
+                                })
+                                .inner
+                            },
+                        );
+
                         let RemoveRule {
                             enabled,
                             count,
@@ -902,7 +936,8 @@ impl RenameRxApp {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     let mut row_changed =
                                         spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
-                                    row_changed |= combo_remove_origin(ui, origin);
+                                    row_changed |=
+                                        combo_character_origin(ui, "remove_origin", origin);
                                     row_changed |= rtl_labeled_spinbox_u32(
                                         ui,
                                         "Characters",
@@ -2643,20 +2678,20 @@ fn combo_insert_anchor(ui: &mut Ui, anchor: &mut InsertAnchor) -> bool {
     changed
 }
 
-fn combo_remove_origin(ui: &mut Ui, origin: &mut RemoveOrigin) -> bool {
+fn combo_character_origin(ui: &mut Ui, id_salt: &str, origin: &mut CharacterOrigin) -> bool {
     let mut changed = false;
-    ComboBox::from_id_salt("remove_origin")
+    ComboBox::from_id_salt(id_salt)
         .selected_text(match *origin {
-            RemoveOrigin::Before => "Before",
-            RemoveOrigin::After => "After",
+            CharacterOrigin::Before => "Before",
+            CharacterOrigin::After => "After",
         })
         .width(BEFORE_AFTER_WIDTH)
         .show_ui(ui, |ui| {
             changed |= ui
-                .selectable_value(origin, RemoveOrigin::Before, "Before")
+                .selectable_value(origin, CharacterOrigin::Before, "Before")
                 .changed();
             changed |= ui
-                .selectable_value(origin, RemoveOrigin::After, "After")
+                .selectable_value(origin, CharacterOrigin::After, "After")
                 .changed();
         });
     changed
