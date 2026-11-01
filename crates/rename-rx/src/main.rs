@@ -1,3 +1,5 @@
+//! Rename RX: a native batch file renamer for Linux.
+
 mod app;
 mod desktop;
 mod dolphin;
@@ -15,6 +17,8 @@ use std::path::PathBuf;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+
     let initial_paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
 
     let options = eframe::NativeOptions {

@@ -66,12 +66,12 @@ class RenameRxExtension(GObject.GObject, Nautilus.MenuProvider):
         subprocess.Popen([APP, *paths])
 "#;
 
-pub struct NautilusState {
+pub(crate) struct NautilusState {
     /// True when the extension on disk launches this same executable.
-    pub current: bool,
+    pub(crate) current: bool,
 }
 
-pub fn state() -> Option<NautilusState> {
+pub(crate) fn state() -> Option<NautilusState> {
     let path = extension_path()?;
     let contents = fs::read_to_string(path).ok()?;
     let current = crate::integration::launcher()
@@ -82,7 +82,7 @@ pub fn state() -> Option<NautilusState> {
 }
 
 /// Nautilus only loads Python extensions when `nautilus-python` is installed.
-pub fn python_support_available() -> bool {
+pub(crate) fn python_support_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(detect_python_support)
 }
@@ -115,7 +115,7 @@ fn detect_python_support() -> bool {
     false
 }
 
-pub fn install() -> Result<PathBuf, String> {
+pub(crate) fn install() -> Result<PathBuf, String> {
     if !python_support_available() {
         return Err(
             "Nautilus Python support is not installed. Install python3-nautilus \
@@ -132,7 +132,7 @@ pub fn install() -> Result<PathBuf, String> {
     write_extension(&directory, &launcher)
 }
 
-pub fn remove() -> Result<(), String> {
+pub(crate) fn remove() -> Result<(), String> {
     let Some(path) = extension_path() else {
         return Ok(());
     };
@@ -145,14 +145,11 @@ pub fn remove() -> Result<(), String> {
 }
 
 fn extension_directory() -> Option<PathBuf> {
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
-        })?;
-
-    Some(data_home.join("nautilus-python").join("extensions"))
+    Some(
+        crate::integration::data_home()?
+            .join("nautilus-python")
+            .join("extensions"),
+    )
 }
 
 fn extension_path() -> Option<PathBuf> {

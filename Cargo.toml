@@ -25,12 +25,74 @@ eframe = { version = "0.37", default-features = false, features = [
 ] }
 egui = "0.37"
 egui_extras = "0.37"
+env_logger = "0.11"
+log = "0.4"
 regex = "1.12"
 rename-rx-core = { path = "crates/rename-rx-core" }
 rfd = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 unicode-segmentation = "1.13"
+
+# Beautiful Rust lints. Members inherit this table with `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Groups first, then the individual settings below win.
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Panics: return errors, and give every intentional panic a reason.
+unwrap_used = "warn"
+expect_used = "allow"
+panic_in_result_fn = "warn"
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+missing_assert_message = "warn"
+
+# Suppressions must explain themselves.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+
+# Unsafe must be justified.
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+
+# API shape.
+fn_params_excessive_bools = "warn"
+struct_excessive_bools = "warn"
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+rc_buffer = "warn"
+
+# Idioms.
+string_add = "warn"
+wildcard_imports = "warn"
+
+# Debugging leftovers.
+dbg_macro = "warn"
+todo = "warn"
+
+# Casts that silently lose information.
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+
+# Deliberate deviations for this application workspace.
+# The workspace is not a published library and exhaustive matches catch new rule
+# modes at compile time; a wildcard arm would hide them.
+exhaustive_enums = "allow"
+
+# Pedantic lints that are mostly noise in practice.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+module_inception = "allow"
+enum_glob_use = "allow"
 
 [profile.release]
 codegen-units = 1

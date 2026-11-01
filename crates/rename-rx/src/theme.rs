@@ -11,24 +11,17 @@ use eframe::egui::{
 
 const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
-const INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.ttf");
 
-pub const HEADER_HEIGHT: f32 = 48.0;
-pub const FOOTER_HEIGHT: f32 = 52.0;
+pub(crate) const HEADER_HEIGHT: f32 = 48.0;
+pub(crate) const FOOTER_HEIGHT: f32 = 52.0;
 
 /// Semibold family, used for titles and section headings.
-pub fn semibold() -> FontFamily {
+pub(crate) fn semibold() -> FontFamily {
     FontFamily::Name("semibold".into())
 }
 
-/// Bold family, available for emphasis.
-#[allow(dead_code)]
-pub fn bold() -> FontFamily {
-    FontFamily::Name("bold".into())
-}
-
 /// Install fonts and the light/dark styles once, at startup.
-pub fn install(ctx: &egui::Context) {
+pub(crate) fn install(ctx: &egui::Context) {
     install_fonts(ctx);
 
     for theme in [Theme::Dark, Theme::Light] {
@@ -37,7 +30,7 @@ pub fn install(ctx: &egui::Context) {
 }
 
 /// Select the active theme. Both styles are already configured by [`install`].
-pub fn set(ctx: &egui::Context, theme: Theme) {
+pub(crate) fn set(ctx: &egui::Context, theme: Theme) {
     ctx.set_theme(theme);
 }
 
@@ -52,11 +45,6 @@ fn install_fonts(ctx: &egui::Context) {
         "inter-semibold".to_owned(),
         Arc::new(FontData::from_static(INTER_SEMIBOLD)),
     );
-    fonts.font_data.insert(
-        "inter-bold".to_owned(),
-        Arc::new(FontData::from_static(INTER_BOLD)),
-    );
-
     fonts
         .families
         .entry(FontFamily::Proportional)
@@ -67,11 +55,6 @@ fn install_fonts(ctx: &egui::Context) {
         FontFamily::Name("semibold".into()),
         vec!["inter-semibold".to_owned()],
     );
-    fonts.families.insert(
-        FontFamily::Name("bold".into()),
-        vec!["inter-bold".to_owned()],
-    );
-
     ctx.set_fonts(fonts);
 }
 
@@ -183,35 +166,35 @@ fn widget(fill: Color32, text: Color32, border: Color32) -> WidgetVisuals {
 
 /// Colours from the Adwaita palette.
 #[derive(Clone, Copy, Debug)]
-pub struct Palette {
-    pub dark: bool,
-    pub background: Color32,
-    pub header: Color32,
-    pub surface: Color32,
-    pub button: Color32,
-    pub button_hover: Color32,
-    pub button_active: Color32,
-    pub input: Color32,
-    pub border: Color32,
-    pub text: Color32,
-    pub secondary: Color32,
-    pub accent: Color32,
-    pub on_accent: Color32,
-    pub selection: Color32,
-    pub stripe: Color32,
-    pub danger: Color32,
-    pub warning: Color32,
+pub(crate) struct Palette {
+    pub(crate) dark: bool,
+    pub(crate) background: Color32,
+    pub(crate) header: Color32,
+    pub(crate) surface: Color32,
+    pub(crate) button: Color32,
+    pub(crate) button_hover: Color32,
+    pub(crate) button_active: Color32,
+    pub(crate) input: Color32,
+    pub(crate) border: Color32,
+    pub(crate) text: Color32,
+    pub(crate) secondary: Color32,
+    pub(crate) accent: Color32,
+    pub(crate) on_accent: Color32,
+    pub(crate) selection: Color32,
+    pub(crate) stripe: Color32,
+    pub(crate) danger: Color32,
+    pub(crate) warning: Color32,
 }
 
 impl Palette {
-    pub fn for_theme(theme: Theme) -> Self {
+    pub(crate) fn for_theme(theme: Theme) -> Self {
         match theme {
             Theme::Dark => Self::dark(),
             Theme::Light => Self::light(),
         }
     }
 
-    pub fn dark() -> Self {
+    pub(crate) fn dark() -> Self {
         Self {
             dark: true,
             background: Color32::from_rgb(0x24, 0x24, 0x24),
@@ -233,7 +216,7 @@ impl Palette {
         }
     }
 
-    pub fn light() -> Self {
+    pub(crate) fn light() -> Self {
         Self {
             dark: false,
             background: Color32::from_rgb(0xfa, 0xfa, 0xfa),

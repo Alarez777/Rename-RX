@@ -1,6 +1,8 @@
 use std::collections::HashSet;
+use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,40 +11,75 @@ use crate::file::FileEntry;
 /// One source → target rename.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenameStep {
+    /// Current path of the file.
     pub from: PathBuf,
+    /// Path the file should have after the rename.
     pub to: PathBuf,
 }
 
 /// A completed rename, used to build the undo operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenameOutcome {
+    /// Path before the rename.
     pub original: PathBuf,
+    /// Path after the rename.
     pub renamed: PathBuf,
 }
 
+/// Failure while staging or finalizing a transactional rename.
 #[derive(Debug)]
 pub struct RenameError {
-    pub message: String,
+    message: String,
+    source: Option<io::Error>,
     /// True when every change made before the failure was rolled back.
-    pub rolled_back: bool,
+    rolled_back: bool,
+}
+
+impl RenameError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            source: None,
+            rolled_back: true,
+        }
+    }
+
+    fn with_source(message: impl Into<String>, source: io::Error) -> Self {
+        Self {
+            message: message.into(),
+            source: Some(source),
+            rolled_back: false,
+        }
+    }
+
+    /// True when every change made before the failure was rolled back.
+    pub fn rolled_back(&self) -> bool {
+        self.rolled_back
+    }
 }
 
 impl fmt::Display for RenameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.message)?;
         if self.rolled_back {
-            write!(formatter, " All changes were rolled back.")?;
+            write!(formatter, " (all changes rolled back)")
         } else {
             write!(
                 formatter,
-                " The rollback was incomplete; check the affected files."
-            )?;
+                " (rollback incomplete; check the affected files)"
+            )
         }
-        Ok(())
     }
 }
 
-impl std::error::Error for RenameError {}
+impl Error for RenameError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match &self.source {
+            Some(error) => Some(error),
+            None => None,
+        }
+    }
+}
 
 /// Build the steps for the current previews. Files whose name did not change
 /// are omitted.
@@ -75,6 +112,12 @@ pub fn plan_steps(files: &[FileEntry], previews: &[String], order: &[usize]) -> 
 /// Staging makes swaps (`a ↔ b`) and cycles safe: every source is moved to a
 /// unique temporary name first, and only then to its final name. If anything
 /// fails, the completed work is rolled back.
+///
+/// # Errors
+///
+/// Returns [`RenameError`] when the plan is invalid, a source disappeared, a
+/// target appeared after validation, or the filesystem rejects a rename. The
+/// error reports whether the rollback completed.
 pub fn execute(steps: &[RenameStep]) -> Result<Vec<RenameOutcome>, RenameError> {
     let steps: Vec<RenameStep> = steps
         .iter()
@@ -93,10 +136,12 @@ pub fn execute(steps: &[RenameStep]) -> Result<Vec<RenameOutcome>, RenameError> 
     for (index, step) in steps.iter().enumerate() {
         if let Err(error) = fs::rename(&step.from, &temporary_paths[index]) {
             let rolled_back = rollback_staged(&steps, &staged);
-            return Err(RenameError {
-                message: format!("Could not stage {}: {error}", step.from.display()),
-                rolled_back,
-            });
+            let mut failure = RenameError::with_source(
+                format!("could not stage {}: {error}", step.from.display()),
+                error,
+            );
+            failure.rolled_back = rolled_back;
+            return Err(failure);
         }
         staged.push((index, temporary_paths[index].clone()));
     }
@@ -109,7 +154,8 @@ pub fn execute(steps: &[RenameStep]) -> Result<Vec<RenameOutcome>, RenameError> 
             let rolled_back = rollback_finalized(&steps, &temporary_paths, &finalized)
                 && rollback_staged(&steps, &staged);
             return Err(RenameError {
-                message: format!("Target appeared while renaming: {}", step.to.display()),
+                message: format!("target appeared while renaming: {}", step.to.display()),
+                source: None,
                 rolled_back,
             });
         }
@@ -117,14 +163,16 @@ pub fn execute(steps: &[RenameStep]) -> Result<Vec<RenameOutcome>, RenameError> 
         if let Err(error) = fs::rename(&temporary_paths[index], &step.to) {
             let rolled_back = rollback_finalized(&steps, &temporary_paths, &finalized)
                 && rollback_staged(&steps, &staged);
-            return Err(RenameError {
-                message: format!(
-                    "Could not rename {} to {}: {error}",
+            let mut failure = RenameError::with_source(
+                format!(
+                    "could not rename {} to {}: {error}",
                     step.from.display(),
                     step.to.display()
                 ),
-                rolled_back,
-            });
+                error,
+            );
+            failure.rolled_back = rolled_back;
+            return Err(failure);
         }
         finalized.push(index);
     }
@@ -146,34 +194,34 @@ fn validate_steps(steps: &[RenameStep]) -> Result<(), RenameError> {
     for step in steps {
         if !seen_sources.insert(step.from.as_path()) {
             return Err(problem(format!(
-                "Duplicate source in the rename plan: {}",
+                "duplicate source in the rename plan: {}",
                 step.from.display()
             )));
         }
 
         if step.from.parent() != step.to.parent() {
             return Err(problem(
-                "Cross-directory renames are not supported".to_owned(),
+                "cross-directory renames are not supported".to_owned(),
             ));
         }
 
         if fs::symlink_metadata(&step.from).is_err() {
             return Err(problem(format!(
-                "Source no longer exists: {}",
+                "source no longer exists: {}",
                 step.from.display()
             )));
         }
 
         if !targets.insert(step.to.as_path()) {
             return Err(problem(format!(
-                "Duplicate target in the rename plan: {}",
+                "duplicate target in the rename plan: {}",
                 step.to.display()
             )));
         }
 
         if !sources.contains(step.to.as_path()) && fs::symlink_metadata(&step.to).is_ok() {
             return Err(problem(format!(
-                "Target already exists: {}",
+                "target already exists: {}",
                 step.to.display()
             )));
         }
@@ -183,10 +231,7 @@ fn validate_steps(steps: &[RenameStep]) -> Result<(), RenameError> {
 }
 
 fn problem(message: String) -> RenameError {
-    RenameError {
-        message,
-        rolled_back: true,
-    }
+    RenameError::new(message)
 }
 
 fn temporary_paths(steps: &[RenameStep]) -> Result<Vec<PathBuf>, RenameError> {
@@ -204,7 +249,7 @@ fn temporary_paths(steps: &[RenameStep]) -> Result<Vec<PathBuf>, RenameError> {
     for step in steps {
         let parent = step.from.parent().ok_or_else(|| {
             problem(format!(
-                "Cannot find the parent directory of {}",
+                "cannot find the parent directory of {}",
                 step.from.display()
             ))
         })?;
@@ -222,7 +267,7 @@ fn temporary_paths(steps: &[RenameStep]) -> Result<Vec<PathBuf>, RenameError> {
 
             if counter > 100_000 {
                 return Err(problem(
-                    "Could not allocate a temporary file name".to_owned(),
+                    "could not allocate a temporary file name".to_owned(),
                 ));
             }
         };
@@ -378,7 +423,7 @@ mod tests {
         }])
         .unwrap_err();
 
-        assert!(error.rolled_back);
+        assert!(error.rolled_back());
         assert_eq!(fs::read_to_string(&a).unwrap(), "A");
         assert_eq!(fs::read_to_string(&b).unwrap(), "B");
     }
@@ -402,7 +447,7 @@ mod tests {
         ])
         .unwrap_err();
 
-        assert!(error.rolled_back, "{error}");
+        assert!(error.rolled_back(), "{error}");
         assert_eq!(fs::read_to_string(&a).unwrap(), "A");
         assert_eq!(fs::read_to_string(&b).unwrap(), "B");
         assert!(!temp.path("c.txt").exists());
@@ -414,6 +459,26 @@ mod tests {
             .filter(|name| name.to_string_lossy().starts_with(".rename-rx-"))
             .collect();
         assert!(leftovers.is_empty(), "temporary files left: {leftovers:?}");
+    }
+
+    #[test]
+    fn error_messages_are_lowercase_and_report_the_rollback() {
+        let temp = TempDir::new();
+        let source = temp.write("a.txt", "A");
+        let target = temp.write("b.txt", "B");
+
+        let error = execute(&[RenameStep {
+            from: source,
+            to: target,
+        }])
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.starts_with("target already exists"), "{message}");
+        assert!(message.ends_with("(all changes rolled back)"), "{message}");
+        assert!(!message.ends_with('.'), "{message}");
+        assert!(error.rolled_back());
+        assert!(error.source().is_none());
     }
 
     #[test]

@@ -2,9 +2,27 @@
 
 use std::path::{Path, PathBuf};
 
+/// The user's configuration directory, following the XDG base directory rules.
+pub(crate) fn config_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+}
+
+/// The user's data directory, following the XDG base directory rules.
+pub(crate) fn data_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+        })
+}
+
 /// The file the desktop should launch.
 ///
-/// When running as an AppImage, `APPIMAGE` points at the outer file;
+/// When running as an `AppImage`, `APPIMAGE` points at the outer file;
 /// `current_exe` would point inside the temporary mount and disappear when the
 /// app exits.
 pub(crate) fn launcher() -> Option<PathBuf> {

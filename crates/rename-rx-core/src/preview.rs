@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -9,8 +9,11 @@ use crate::rules::{CompiledRules, NameParts, RuleSet, SortMethod, SortRule};
 /// How serious a validation finding is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
+    /// Informational finding that does not block renaming.
     Info,
+    /// Finding that the user should review before renaming.
     Warning,
+    /// Finding that blocks renaming.
     Error,
 }
 
@@ -18,17 +21,23 @@ pub enum Severity {
 /// expression) have no file id.
 #[derive(Clone, Debug)]
 pub struct Issue {
+    /// File the finding belongs to, or `None` for a rule-level finding.
     pub file_id: Option<FileId>,
+    /// How serious the finding is.
     pub severity: Severity,
+    /// Human-readable description shown in the validity dialog.
     pub message: String,
 }
 
+/// Every finding produced by one preview pass.
 #[derive(Clone, Debug, Default)]
 pub struct ValidationReport {
+    /// Findings, most severe first.
     pub issues: Vec<Issue>,
 }
 
 impl ValidationReport {
+    /// Number of [`Severity::Error`] findings.
     pub fn errors(&self) -> usize {
         self.issues
             .iter()
@@ -36,6 +45,7 @@ impl ValidationReport {
             .count()
     }
 
+    /// Number of [`Severity::Warning`] findings.
     pub fn warnings(&self) -> usize {
         self.issues
             .iter()
@@ -43,15 +53,12 @@ impl ValidationReport {
             .count()
     }
 
+    /// Number of [`Severity::Info`] findings.
     pub fn infos(&self) -> usize {
         self.issues
             .iter()
             .filter(|issue| issue.severity == Severity::Info)
             .count()
-    }
-
-    pub fn is_clean(&self) -> bool {
-        self.errors() == 0 && self.warnings() == 0
     }
 }
 
@@ -62,8 +69,7 @@ pub struct PreviewResult {
     pub order: Vec<usize>,
     /// Resulting file name for each input file, indexed like the input slice.
     pub previews: Vec<String>,
-    /// Split result for each input file, indexed like the input slice.
-    pub parts: Vec<NameParts>,
+    /// Findings produced while validating the previews.
     pub report: ValidationReport,
 }
 
@@ -80,7 +86,7 @@ pub fn build_preview(files: &[FileEntry], rules: &RuleSet) -> PreviewResult {
         parts[index] = result;
     }
 
-    let mut report = validate(files, &order, &previews, &parts, rules, &compiled.errors);
+    let mut report = validate(files, &order, &previews, &parts, rules, compiled.errors());
     // Errors first, then warnings, then informational findings.
     report
         .issues
@@ -89,13 +95,12 @@ pub fn build_preview(files: &[FileEntry], rules: &RuleSet) -> PreviewResult {
     PreviewResult {
         order,
         previews,
-        parts,
         report,
     }
 }
 
 /// Sort indices without touching the file list itself.
-pub fn sorted_indices(files: &[FileEntry], sort: &SortRule) -> Vec<usize> {
+fn sorted_indices(files: &[FileEntry], sort: &SortRule) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..files.len()).collect();
 
     if !sort.enabled || sort.method == SortMethod::Original {
@@ -171,165 +176,23 @@ fn validate(
         .filter(|(index, file)| previews[*index] != file.original_name)
         .map(|(_, file)| file.path.as_path())
         .collect();
-    let mut exact_names: HashMap<&str, Vec<usize>> = HashMap::new();
-    let mut folded_names: HashMap<String, Vec<usize>> = HashMap::new();
+    // Deterministic maps keep duplicate findings in a stable order.
+    let mut exact_names: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut folded_names: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for &index in order {
         let file = &files[index];
         let preview = previews[index].as_str();
 
-        if !file.utf8_name {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "File name is not valid UTF-8; it is not supported yet".to_owned(),
-            );
-        }
-
-        if std::fs::symlink_metadata(&file.path).is_err() {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Source file no longer exists".to_owned(),
-            );
-        }
-
-        if preview.is_empty() {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Resulting name is empty".to_owned(),
-            );
-        } else if parts[index].stem.trim().is_empty() {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Resulting name has no base name".to_owned(),
-            );
-        }
-
-        if preview == "." || preview == ".." {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Resulting name is reserved".to_owned(),
-            );
-        }
-
-        if preview.contains('/') {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Name contains a path separator (/)".to_owned(),
-            );
-        }
-
-        if preview.chars().any(char::is_control) {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Name contains control characters".to_owned(),
-            );
-        }
-
-        if preview.contains(['<', '>', ':', '"', '\\', '|', '?', '*']) {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Warning,
-                "Name contains characters that are not portable to Windows".to_owned(),
-            );
-        }
-
-        if preview.len() > 255 {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Error,
-                "Name is longer than 255 bytes".to_owned(),
-            );
-        }
-
-        if preview.trim() != preview {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Warning,
-                "Name has leading or trailing spaces".to_owned(),
-            );
-        }
-
-        if preview.ends_with('.') {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Warning,
-                "Name ends with a dot".to_owned(),
-            );
-        }
-
-        if is_reserved_windows_name(preview) {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Warning,
-                "Name is reserved on Windows".to_owned(),
-            );
-        }
-
-        if let Some(parent) = file.path.parent() {
-            let target = parent.join(preview);
-
-            if target.as_os_str().len() > 4096 {
-                push(
-                    &mut report,
-                    Some(file.id),
-                    Severity::Error,
-                    "Full path is longer than 4096 bytes".to_owned(),
-                );
-            }
-
-            if target != file.path
-                && std::fs::symlink_metadata(&target).is_ok()
-                && !moving_paths.contains(target.as_path())
-            {
-                push(
-                    &mut report,
-                    Some(file.id),
-                    Severity::Error,
-                    format!("Target already exists: {preview}"),
-                );
-            }
-
-            if parent
-                .metadata()
-                .map(|metadata| metadata.permissions().readonly())
-                .unwrap_or(false)
-            {
-                push(
-                    &mut report,
-                    Some(file.id),
-                    Severity::Error,
-                    "Directory is not writable".to_owned(),
-                );
-            }
-        }
-
-        if rule_errors.is_empty() && rules.has_name_effects() && preview == file.original_name {
-            push(
-                &mut report,
-                Some(file.id),
-                Severity::Info,
-                "Name is unchanged".to_owned(),
-            );
-        }
+        validate_file(
+            &mut report,
+            file,
+            preview,
+            &parts[index],
+            rules,
+            rule_errors,
+            &moving_paths,
+        );
 
         exact_names.entry(preview).or_default().push(index);
         folded_names
@@ -338,16 +201,140 @@ fn validate(
             .push(index);
     }
 
-    for (name, indices) in &exact_names {
-        if indices.len() > 1 {
-            for &index in indices {
-                push(
-                    &mut report,
-                    Some(files[index].id),
-                    Severity::Error,
-                    format!("Duplicate target name: {name}"),
-                );
-            }
+    report_duplicate_targets(&mut report, files, previews, &exact_names, &folded_names);
+    report
+}
+
+fn validate_file(
+    report: &mut ValidationReport,
+    file: &FileEntry,
+    preview: &str,
+    parts: &NameParts,
+    rules: &RuleSet,
+    rule_errors: &[String],
+    moving_paths: &HashSet<&Path>,
+) {
+    if !file.utf8_name {
+        error(
+            report,
+            file.id,
+            "File name is not valid UTF-8; it is not supported yet",
+        );
+    }
+
+    if std::fs::symlink_metadata(&file.path).is_err() {
+        error(report, file.id, "Source file no longer exists");
+    }
+
+    if preview.is_empty() {
+        error(report, file.id, "Resulting name is empty");
+    } else if parts.stem.trim().is_empty() {
+        error(report, file.id, "Resulting name has no base name");
+    }
+
+    if preview == "." || preview == ".." {
+        error(report, file.id, "Resulting name is reserved");
+    }
+
+    if preview.contains('/') {
+        error(report, file.id, "Name contains a path separator (/)");
+    }
+
+    if preview.chars().any(char::is_control) {
+        error(report, file.id, "Name contains control characters");
+    }
+
+    if preview.contains(['<', '>', ':', '"', '\\', '|', '?', '*']) {
+        warning(
+            report,
+            file.id,
+            "Name contains characters that are not portable to Windows",
+        );
+    }
+
+    if preview.len() > 255 {
+        error(report, file.id, "Name is longer than 255 bytes");
+    }
+
+    if preview.trim() != preview {
+        warning(report, file.id, "Name has leading or trailing spaces");
+    }
+
+    if preview.ends_with('.') {
+        warning(report, file.id, "Name ends with a dot");
+    }
+
+    if is_reserved_windows_name(preview) {
+        warning(report, file.id, "Name is reserved on Windows");
+    }
+
+    validate_target(report, file, preview, moving_paths);
+
+    if rule_errors.is_empty() && rules.has_name_effects() && preview == file.original_name {
+        push(
+            report,
+            Some(file.id),
+            Severity::Info,
+            "Name is unchanged".to_owned(),
+        );
+    }
+}
+
+fn validate_target(
+    report: &mut ValidationReport,
+    file: &FileEntry,
+    preview: &str,
+    moving_paths: &HashSet<&Path>,
+) {
+    let Some(parent) = file.path.parent() else {
+        return;
+    };
+
+    let target = parent.join(preview);
+
+    if target.as_os_str().len() > 4096 {
+        error(report, file.id, "Full path is longer than 4096 bytes");
+    }
+
+    if target != file.path
+        && std::fs::symlink_metadata(&target).is_ok()
+        && !moving_paths.contains(target.as_path())
+    {
+        push(
+            report,
+            Some(file.id),
+            Severity::Error,
+            format!("Target already exists: {preview}"),
+        );
+    }
+
+    if parent
+        .metadata()
+        .is_ok_and(|metadata| metadata.permissions().readonly())
+    {
+        error(report, file.id, "Directory is not writable");
+    }
+}
+
+fn report_duplicate_targets(
+    report: &mut ValidationReport,
+    files: &[FileEntry],
+    previews: &[String],
+    exact_names: &BTreeMap<&str, Vec<usize>>,
+    folded_names: &BTreeMap<String, Vec<usize>>,
+) {
+    for (name, indices) in exact_names {
+        if indices.len() <= 1 {
+            continue;
+        }
+
+        for &index in indices {
+            push(
+                report,
+                Some(files[index].id),
+                Severity::Error,
+                format!("Duplicate target name: {name}"),
+            );
         }
     }
 
@@ -365,17 +352,22 @@ fn validate(
         // differ solely by case and would collide on a case-insensitive disk.
         if distinct.len() > 1 {
             for &index in indices {
-                push(
-                    &mut report,
-                    Some(files[index].id),
-                    Severity::Warning,
-                    "Target collides with another name on a case-insensitive filesystem".to_owned(),
+                warning(
+                    report,
+                    files[index].id,
+                    "Target collides with another name on a case-insensitive filesystem",
                 );
             }
         }
     }
+}
 
-    report
+fn error(report: &mut ValidationReport, file_id: FileId, message: &str) {
+    push(report, Some(file_id), Severity::Error, message.to_owned());
+}
+
+fn warning(report: &mut ValidationReport, file_id: FileId, message: &str) {
+    push(report, Some(file_id), Severity::Warning, message.to_owned());
 }
 
 fn push(
@@ -425,7 +417,6 @@ fn is_reserved_windows_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file::split_file_name;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -463,13 +454,10 @@ mod tests {
     }
 
     fn fake_entry(id: FileId, name: &str) -> FileEntry {
-        let (stem, extension) = split_file_name(name);
         FileEntry {
             id,
             path: PathBuf::from("/tmp").join(name),
             original_name: name.to_owned(),
-            stem: stem.to_owned(),
-            extension: extension.to_owned(),
             created: None,
             modified: None,
             size: 0,

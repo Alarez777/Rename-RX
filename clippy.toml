@@ -1,0 +1,11 @@
+# Beautiful Rust clippy configuration.
+#
+# A bool argument is unreadable at the call site and cannot grow a third mode;
+# use a small enum or two methods instead.
+max-fn-params-bools = 0
+
+# Tests use unwrap/expect/printing as assertions, so the library rules do not
+# apply inside them.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true

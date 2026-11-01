@@ -7,19 +7,19 @@ use rename_rx_core::RuleSet;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Preset {
-    pub name: String,
-    pub rules: RuleSet,
+pub(crate) struct Preset {
+    pub(crate) name: String,
+    pub(crate) rules: RuleSet,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct PresetStore {
-    pub presets: Vec<Preset>,
+pub(crate) struct PresetStore {
+    pub(crate) presets: Vec<Preset>,
 }
 
 impl PresetStore {
-    pub fn load() -> Self {
+    pub(crate) fn load() -> Self {
         let Some(path) = path() else {
             return Self::default();
         };
@@ -29,12 +29,12 @@ impl PresetStore {
         };
 
         serde_json::from_str(&contents).unwrap_or_else(|error| {
-            eprintln!("rename-rx: could not parse {}: {error}", path.display());
+            log::warn!("could not parse {}: {error}", path.display());
             Self::default()
         })
     }
 
-    pub fn save(&self) -> Result<(), String> {
+    pub(crate) fn save(&self) -> Result<(), String> {
         let Some(path) = path() else {
             return Err("Could not determine the configuration directory.".to_owned());
         };
@@ -42,7 +42,7 @@ impl PresetStore {
         write_to(&path, self)
     }
 
-    pub fn find(&self, name: &str) -> Option<usize> {
+    pub(crate) fn find(&self, name: &str) -> Option<usize> {
         self.presets
             .iter()
             .position(|preset| preset.name.eq_ignore_ascii_case(name))
@@ -50,12 +50,11 @@ impl PresetStore {
 }
 
 fn path() -> Option<PathBuf> {
-    let config_home = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-
-    Some(config_home.join("rename-rx").join("presets.json"))
+    Some(
+        crate::integration::config_home()?
+            .join("rename-rx")
+            .join("presets.json"),
+    )
 }
 
 fn write_to(path: &Path, store: &PresetStore) -> Result<(), String> {

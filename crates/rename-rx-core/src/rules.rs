@@ -8,18 +8,31 @@ use crate::file::FileEntry;
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RuleSet {
+    /// Replaces the whole base name.
     pub new_name: NewNameRule,
+    /// Literal text replacement, optionally whole-word.
     pub replace: ReplaceRule,
+    /// Regular-expression replacement.
     pub regex: RegexRule,
+    /// Inserts text at a character position.
     pub insert: InsertRule,
+    /// Keeps only one range of characters.
     pub keep: KeepRule,
+    /// Removes one range of characters.
     pub remove: RemoveRule,
+    /// Moves one range of characters elsewhere in the name.
     pub move_rule: MoveRule,
+    /// Adds a sequential number.
     pub serialize: SerializeRule,
+    /// Adds a fixed prefix.
     pub prefix: TextRule,
+    /// Adds a fixed suffix.
     pub suffix: TextRule,
+    /// Replaces the extension.
     pub extension: ExtensionRule,
+    /// Changes the case of the base name.
     pub case: CaseRule,
+    /// Changes the display order and serial-number order.
     pub sort: SortRule,
 }
 
@@ -42,20 +55,29 @@ impl RuleSet {
     }
 }
 
+/// Replaces the whole base name with a fixed value.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct NewNameRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// New base name; an empty value makes the resulting name invalid.
     pub value: String,
 }
 
+/// Replaces literal text in the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ReplaceRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Literal text to find.
     pub find: String,
+    /// Replacement text.
     pub replace: String,
+    /// Whether matching is case-sensitive.
     pub case_sensitive: bool,
+    /// Whether only whole words match.
     pub whole_word: bool,
 }
 
@@ -71,38 +93,56 @@ impl Default for ReplaceRule {
     }
 }
 
+/// Replaces text matched by a regular expression.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RegexRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Regular expression pattern.
     pub pattern: String,
+    /// Replacement text; capture groups use `$1`, `${name}`.
     pub replacement: String,
+    /// Whether matching ignores case.
     pub case_insensitive: bool,
 }
 
+/// Inserts text into the base name.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct InsertRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Text to insert.
     pub text: String,
+    /// Grapheme position, counted from [`InsertAnchor`].
     pub position: u32,
+    /// End of the base name that `position` is counted from.
     pub anchor: InsertAnchor,
 }
 
+/// Where inserted text goes relative to the counted position.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InsertAnchor {
+    /// Insert before the grapheme at `position`.
     #[default]
     Before,
+    /// Insert after the grapheme at `position`, counting from the end.
     After,
 }
 
+/// Keeps one range of graphemes from the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct KeepRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Number of graphemes to keep.
     pub count: u32,
+    /// End of the base name that `position` is counted from.
     pub origin: CharacterOrigin,
+    /// Grapheme position where the kept range starts.
     pub position: u32,
 }
 
@@ -117,12 +157,17 @@ impl Default for KeepRule {
     }
 }
 
+/// Removes one range of graphemes from the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RemoveRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Number of graphemes to remove.
     pub count: u32,
+    /// End of the base name that `position` is counted from.
     pub origin: CharacterOrigin,
+    /// Grapheme position where the removed range starts.
     pub position: u32,
 }
 
@@ -139,22 +184,32 @@ impl Default for RemoveRule {
     }
 }
 
+/// End of the base name that a position or count is measured from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CharacterOrigin {
+    /// Measure from the start of the base name.
     #[default]
     Before,
+    /// Measure from the end of the base name.
     After,
 }
 
+/// Moves one range of graphemes elsewhere in the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct MoveRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Grapheme position of the range, counted from [`MoveAnchor`].
     pub start: u32,
+    /// Number of graphemes to move.
     pub length: u32,
+    /// End of the base name that `start` is counted from.
     pub anchor: MoveAnchor,
+    /// End of the remaining name that `offset` is counted from.
     pub destination: CharacterOrigin,
+    /// Grapheme offset for the insertion point in the remaining name.
     pub offset: u32,
 }
 
@@ -171,24 +226,36 @@ impl Default for MoveRule {
     }
 }
 
+/// End of the base name where the moved range starts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MoveAnchor {
+    /// Count `start` from the beginning.
     #[default]
     Start,
+    /// Count `start` backwards from the end.
     End,
 }
 
+/// Adds a sequential number to the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SerializeRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Number assigned to the first file.
     pub start: u32,
+    /// Increment between consecutive files.
     pub step: u32,
+    /// Constant added to every number.
     pub offset: u32,
+    /// Total width of the number, zero-padded.
     pub padding: u32,
+    /// Where the number is placed.
     pub position: SerializePosition,
+    /// Text before the number.
     pub prefix: String,
+    /// Text after the number.
     pub suffix: String,
 }
 
@@ -209,86 +276,116 @@ impl Default for SerializeRule {
     }
 }
 
+/// Where the serial number is placed relative to the base name.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializePosition {
+    /// Place the number after the base name.
     #[default]
     After,
+    /// Place the number before the base name.
     Before,
 }
 
+/// Adds a fixed piece of text to the base name.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct TextRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Text to add.
     pub text: String,
 }
 
+/// Replaces the extension.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ExtensionRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// New extension; a leading dot is ignored.
     pub value: String,
 }
 
+/// Changes the case of the base name.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct CaseRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Case conversion to apply.
     pub mode: CaseMode,
 }
 
+/// Text case applied by [`CaseRule`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaseMode {
+    /// Convert every character to lowercase.
     #[default]
     Lower,
+    /// Capitalize the first letter of every word.
     Title,
+    /// Convert every character to uppercase.
     Upper,
 }
 
+/// Changes the display order and the order used for serial numbers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SortRule {
+    /// Whether the rule runs.
     pub enabled: bool,
+    /// Sort key.
     pub method: SortMethod,
+    /// Whether the order is reversed.
     pub descending: bool,
 }
 
+/// Order used to list files and assign serial numbers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortMethod {
+    /// Keep the order in which the files were added.
     #[default]
     Original,
+    /// Sort by file name, ignoring case.
     Name,
+    /// Sort by creation time, then by name.
     Created,
+    /// Sort by modification time, then by name.
     Modified,
 }
 
 /// The two parts a rename rule operates on.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NameParts {
+    /// Base name without its extension.
     pub stem: String,
+    /// Extension without the leading dot.
     pub extension: String,
 }
 
 impl NameParts {
+    /// Join the stem and extension into a complete file name.
     pub fn file_name(&self) -> String {
         join_name(&self.stem, &self.extension)
     }
 }
 
 /// Rules compiled once for a whole preview pass.
-pub struct CompiledRules<'a> {
-    rules: &'a RuleSet,
+#[derive(Debug)]
+pub struct CompiledRules<'rules> {
+    rules: &'rules RuleSet,
     regex: Option<Regex>,
     replace: Option<Regex>,
     /// Rule-level problems, such as an invalid regular expression.
-    pub errors: Vec<String>,
+    errors: Vec<String>,
 }
 
-impl<'a> CompiledRules<'a> {
-    pub fn new(rules: &'a RuleSet) -> Self {
+impl<'rules> CompiledRules<'rules> {
+    /// Compile the regular expressions and report rule-level problems.
+    pub fn new(rules: &'rules RuleSet) -> Self {
         let mut errors = Vec::new();
 
         let regex = if rules.regex.enabled && !rules.regex.pattern.is_empty() {
@@ -335,6 +432,11 @@ impl<'a> CompiledRules<'a> {
         }
     }
 
+    /// Rule-level problems found while compiling, such as an invalid regex.
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
+
     /// Apply the pipeline to one file. `index` is the position of the file in
     /// the current (sorted) order and drives serialization.
     pub fn apply(&self, file: &FileEntry, index: usize) -> String {
@@ -343,8 +445,9 @@ impl<'a> CompiledRules<'a> {
 
     /// Apply the pipeline and return the stem and extension separately.
     pub fn apply_parts(&self, file: &FileEntry, index: usize) -> NameParts {
-        let mut stem = file.stem.clone();
-        let mut extension = file.extension.clone();
+        let (stem, extension) = file.name_parts();
+        let mut stem = stem.to_owned();
+        let mut extension = extension.to_owned();
 
         if self.rules.new_name.enabled {
             stem.clone_from(&self.rules.new_name.value);
@@ -366,7 +469,7 @@ impl<'a> CompiledRules<'a> {
             stem = insert_text(
                 &stem,
                 &self.rules.insert.text,
-                self.rules.insert.position as usize,
+                usize_from(self.rules.insert.position),
                 self.rules.insert.anchor,
             );
         }
@@ -374,35 +477,35 @@ impl<'a> CompiledRules<'a> {
         if self.rules.keep.enabled && self.rules.keep.count > 0 {
             stem = keep_text(
                 &stem,
-                self.rules.keep.count as usize,
+                usize_from(self.rules.keep.count),
                 self.rules.keep.origin,
-                self.rules.keep.position as usize,
+                usize_from(self.rules.keep.position),
             );
         }
 
         if self.rules.remove.enabled && self.rules.remove.count > 0 {
             stem = remove_chars(
                 &stem,
-                self.rules.remove.count as usize,
+                usize_from(self.rules.remove.count),
                 self.rules.remove.origin,
-                self.rules.remove.position as usize,
+                usize_from(self.rules.remove.position),
             );
         }
 
         if self.rules.move_rule.enabled && self.rules.move_rule.length > 0 {
             stem = move_text(
                 &stem,
-                self.rules.move_rule.start as usize,
-                self.rules.move_rule.length as usize,
+                usize_from(self.rules.move_rule.start),
+                usize_from(self.rules.move_rule.length),
                 self.rules.move_rule.anchor,
                 self.rules.move_rule.destination,
-                self.rules.move_rule.offset as usize,
+                usize_from(self.rules.move_rule.offset),
             );
         }
 
         if self.rules.serialize.enabled {
             let number = u64::from(self.rules.serialize.start)
-                + index as u64 * u64::from(self.rules.serialize.step)
+                + u64::try_from(index).unwrap_or(u64::MAX) * u64::from(self.rules.serialize.step)
                 + u64::from(self.rules.serialize.offset);
             stem = serialize(
                 &stem,
@@ -434,10 +537,8 @@ impl<'a> CompiledRules<'a> {
     }
 }
 
-/// Apply every rule except sorting to a file name. Kept as a convenience for
-/// callers that only need a single result (tests, future single-file previews).
-pub fn apply_rules(file: &FileEntry, rules: &RuleSet, index: usize) -> String {
-    CompiledRules::new(rules).apply(file, index)
+fn usize_from(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 fn join_name(stem: &str, extension: &str) -> String {
@@ -560,7 +661,7 @@ fn serialize(
     prefix: &str,
     suffix: &str,
 ) -> String {
-    let width = padding as usize;
+    let width = usize_from(padding);
     let digits = format!("{number:0width$}");
     let token = format!("{prefix}{digits}{suffix}");
 
@@ -609,16 +710,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::file::split_file_name;
 
     fn entry(name: &str) -> FileEntry {
-        let (stem, extension) = split_file_name(name);
         FileEntry {
             id: 0,
             path: PathBuf::from("/tmp").join(name),
             original_name: name.to_owned(),
-            stem: stem.to_owned(),
-            extension: extension.to_owned(),
             created: None,
             modified: None,
             size: 0,

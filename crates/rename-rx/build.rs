@@ -1,3 +1,5 @@
+//! Embeds dependency and toolchain versions in the About dialog.
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -13,7 +15,9 @@ const PACKAGES: &[(&str, &str)] = &[
 ];
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR for build scripts"),
+    );
     let lock_path = manifest_dir.join("../../Cargo.lock");
     println!("cargo:rerun-if-changed={}", lock_path.display());
 

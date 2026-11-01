@@ -12,12 +12,12 @@ const UNIQUE_ID: &str = "rename-rx";
 const ACTION_NAME: &str = "Rename with Rename RX";
 const ACTION_NAME_ES: &str = "Renombrar con Rename RX";
 
-pub struct ThunarState {
+pub(crate) struct ThunarState {
     /// True when the stored action launches this same executable.
-    pub current: bool,
+    pub(crate) current: bool,
 }
 
-pub fn state() -> Option<ThunarState> {
+pub(crate) fn state() -> Option<ThunarState> {
     let path = uca_path()?;
     let xml = fs::read_to_string(path).ok()?;
     let blocks = action_blocks(&xml);
@@ -37,7 +37,7 @@ pub fn state() -> Option<ThunarState> {
     Some(ThunarState { current })
 }
 
-pub fn install() -> Result<PathBuf, String> {
+pub(crate) fn install() -> Result<PathBuf, String> {
     let launcher = crate::integration::launcher()
         .ok_or_else(|| "Could not locate the Rename RX executable.".to_owned())?;
     let path =
@@ -54,7 +54,7 @@ pub fn install() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub fn remove() -> Result<(), String> {
+pub(crate) fn remove() -> Result<(), String> {
     let Some(path) = uca_path() else {
         return Ok(());
     };
@@ -81,15 +81,12 @@ pub fn remove() -> Result<(), String> {
     write_atomic(&path, cleaned.as_bytes())
 }
 
-fn config_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-}
-
 fn uca_path() -> Option<PathBuf> {
-    Some(config_home()?.join("Thunar").join("uca.xml"))
+    Some(
+        crate::integration::config_home()?
+            .join("Thunar")
+            .join("uca.xml"),
+    )
 }
 
 fn action_block(launcher: &Path) -> Result<String, String> {

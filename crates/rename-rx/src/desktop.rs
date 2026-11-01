@@ -9,17 +9,17 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const APP_ID: &str = "io.github.alarez777.RenameRX";
+pub(crate) const APP_ID: &str = "io.github.alarez777.RenameRX";
 const DESKTOP_FILE_NAME: &str = "io.github.alarez777.RenameRX.desktop";
 const ICON_FILE_NAME: &str = "io.github.alarez777.RenameRX.svg";
 const ICON: &str = include_str!("../../../assets/rename-rx.svg");
 
-pub struct DesktopState {
+pub(crate) struct DesktopState {
     /// True when the launcher and icon match this executable.
-    pub current: bool,
+    pub(crate) current: bool,
 }
 
-pub fn state() -> Option<DesktopState> {
+pub(crate) fn state() -> Option<DesktopState> {
     let path = desktop_path()?;
     let contents = fs::read_to_string(path).ok()?;
     let icon_matches = icon_path()
@@ -34,7 +34,7 @@ pub fn state() -> Option<DesktopState> {
     Some(DesktopState { current })
 }
 
-pub fn install() -> Result<PathBuf, String> {
+pub(crate) fn install() -> Result<PathBuf, String> {
     let launcher = crate::integration::launcher()
         .ok_or_else(|| "Could not locate the Rename RX executable.".to_owned())?;
     let applications = applications_directory()
@@ -45,7 +45,7 @@ pub fn install() -> Result<PathBuf, String> {
     write_integration(&applications, &icons, &launcher)
 }
 
-pub fn remove() -> Result<(), String> {
+pub(crate) fn remove() -> Result<(), String> {
     if let Some(path) = desktop_path() {
         remove_file(&path)?;
     }
@@ -55,9 +55,9 @@ pub fn remove() -> Result<(), String> {
     Ok(())
 }
 
-/// An older launcher, usually created by an AppImage manager, that uses the
+/// An older launcher, usually created by an `AppImage` manager, that uses the
 /// wrong startup class and would show up as a second menu entry.
-pub fn legacy_launcher() -> Option<PathBuf> {
+pub(crate) fn legacy_launcher() -> Option<PathBuf> {
     let path = applications_directory()?.join("rename-rx.desktop");
     let contents = fs::read_to_string(&path).ok()?;
     legacy_contents_match(&contents).then_some(path)
@@ -68,28 +68,25 @@ fn legacy_contents_match(contents: &str) -> bool {
         && (contents.contains("StartupWMClass=rename-rx") || contents.contains("Icon=rename-rx"))
 }
 
-pub fn remove_legacy_launcher() -> Result<(), String> {
+pub(crate) fn remove_legacy_launcher() -> Result<(), String> {
     match legacy_launcher() {
         Some(path) => remove_file(&path),
         None => Ok(()),
     }
 }
 
-fn data_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
-        })
-}
-
 fn applications_directory() -> Option<PathBuf> {
-    Some(data_home()?.join("applications"))
+    Some(crate::integration::data_home()?.join("applications"))
 }
 
 fn icons_directory() -> Option<PathBuf> {
-    Some(data_home()?.join("icons/hicolor/scalable/apps"))
+    Some(
+        crate::integration::data_home()?
+            .join("icons")
+            .join("hicolor")
+            .join("scalable")
+            .join("apps"),
+    )
 }
 
 fn desktop_path() -> Option<PathBuf> {

@@ -11,12 +11,12 @@ use std::process::{Command, Stdio};
 
 const SERVICE_MENU_NAME: &str = "rename-rx.desktop";
 
-pub struct DolphinState {
+pub(crate) struct DolphinState {
     /// True when the service menu matches this executable and is executable.
-    pub current: bool,
+    pub(crate) current: bool,
 }
 
-pub fn state() -> Option<DolphinState> {
+pub(crate) fn state() -> Option<DolphinState> {
     let path = service_menu_path()?;
     let contents = fs::read_to_string(&path).ok()?;
     let executable = is_executable(&path);
@@ -29,7 +29,7 @@ pub fn state() -> Option<DolphinState> {
     Some(DolphinState { current })
 }
 
-pub fn install() -> Result<PathBuf, String> {
+pub(crate) fn install() -> Result<PathBuf, String> {
     let launcher = crate::integration::launcher()
         .ok_or_else(|| "Could not locate the Rename RX executable.".to_owned())?;
     let directory = service_menu_directory()
@@ -40,7 +40,7 @@ pub fn install() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub fn remove() -> Result<(), String> {
+pub(crate) fn remove() -> Result<(), String> {
     let Some(path) = service_menu_path() else {
         return Ok(());
     };
@@ -55,17 +55,12 @@ pub fn remove() -> Result<(), String> {
     }
 }
 
-fn data_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
-        })
-}
-
 fn service_menu_directory() -> Option<PathBuf> {
-    Some(data_home()?.join("kio").join("servicemenus"))
+    Some(
+        crate::integration::data_home()?
+            .join("kio")
+            .join("servicemenus"),
+    )
 }
 
 fn service_menu_path() -> Option<PathBuf> {
@@ -145,9 +140,7 @@ fn mark_executable(_path: &Path) -> Result<(), String> {
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
-    fs::metadata(path)
-        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]

@@ -9,18 +9,10 @@ mod rename;
 mod rules;
 
 pub use file::{FileEntry, FileId, split_file_name};
-pub use preview::{
-    Issue, PreviewResult, Severity, ValidationReport, build_preview, sorted_indices,
-};
+pub use preview::{Issue, PreviewResult, Severity, ValidationReport, build_preview};
 pub use rename::{RenameError, RenameOutcome, RenameStep, execute, plan_steps};
 pub use rules::{
     CaseMode, CaseRule, CharacterOrigin, CompiledRules, ExtensionRule, InsertAnchor, InsertRule,
     KeepRule, MoveAnchor, MoveRule, NameParts, NewNameRule, RegexRule, RemoveRule, ReplaceRule,
-    RuleSet, SerializePosition, SerializeRule, SortMethod, SortRule, TextRule, apply_rules,
+    RuleSet, SerializePosition, SerializeRule, SortMethod, SortRule, TextRule,
 };
-
-/// Human-readable application name.
-pub const APP_NAME: &str = "Rename RX";
-
-/// Short application description.
-pub const APP_DESCRIPTION: &str = "Batch file renamer for Linux";

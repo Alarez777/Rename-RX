@@ -5,9 +5,16 @@ use std::collections::BTreeSet;
 use rename_rx_core::RuleSet;
 use serde::{Deserialize, Serialize};
 
+/// Whether a tool is active in the current rule set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToolState {
+    Enabled,
+    Disabled,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Tool {
+pub(crate) enum Tool {
     Case,
     Extension,
     Insert,
@@ -25,7 +32,7 @@ pub enum Tool {
 
 impl Tool {
     /// Every tool, sorted by name for the Tools dialog.
-    pub const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::Case,
         Self::Extension,
         Self::Insert,
@@ -41,7 +48,7 @@ impl Tool {
         Self::Suffix,
     ];
 
-    pub const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Case => "Case",
             Self::Extension => "Extension",
@@ -59,8 +66,8 @@ impl Tool {
         }
     }
 
-    pub fn enabled(self, rules: &RuleSet) -> bool {
-        match self {
+    pub(crate) fn state(self, rules: &RuleSet) -> ToolState {
+        let enabled = match self {
             Self::Case => rules.case.enabled,
             Self::Extension => rules.extension.enabled,
             Self::Insert => rules.insert.enabled,
@@ -74,10 +81,18 @@ impl Tool {
             Self::Serialize => rules.serialize.enabled,
             Self::Sort => rules.sort.enabled,
             Self::Suffix => rules.suffix.enabled,
+        };
+
+        if enabled {
+            ToolState::Enabled
+        } else {
+            ToolState::Disabled
         }
     }
 
-    pub fn set_enabled(self, rules: &mut RuleSet, enabled: bool) {
+    pub(crate) fn set_state(self, rules: &mut RuleSet, state: ToolState) {
+        let enabled = matches!(state, ToolState::Enabled);
+
         match self {
             Self::Case => rules.case.enabled = enabled,
             Self::Extension => rules.extension.enabled = enabled,
@@ -97,13 +112,13 @@ impl Tool {
 
     /// Whether a preset relies on this tool. Loading such a preset makes the
     /// tool visible again, even if the user hid it.
-    pub fn is_used_by(self, rules: &RuleSet) -> bool {
-        self.enabled(rules)
+    pub(crate) fn is_used_by(self, rules: &RuleSet) -> bool {
+        self.state(rules) == ToolState::Enabled
     }
 }
 
 /// Shows every tool that `rules` uses, returning whether `hidden` changed.
-pub fn show_tools_used_by(hidden: &mut BTreeSet<Tool>, rules: &RuleSet) -> bool {
+pub(crate) fn show_tools_used_by(hidden: &mut BTreeSet<Tool>, rules: &RuleSet) -> bool {
     let mut changed = false;
 
     for tool in Tool::ALL {
@@ -135,11 +150,11 @@ mod tests {
     fn every_tool_maps_to_exactly_one_rule() {
         for tool in Tool::ALL {
             let mut rules = RuleSet::default();
-            tool.set_enabled(&mut rules, true);
+            tool.set_state(&mut rules, ToolState::Enabled);
 
             for other in Tool::ALL {
                 assert_eq!(
-                    other.enabled(&rules),
+                    other.state(&rules) == ToolState::Enabled,
                     other == tool,
                     "{} affected {}",
                     tool.label(),
@@ -156,7 +171,7 @@ mod tests {
         let rules = RuleSet::default();
 
         for tool in Tool::ALL {
-            assert!(!tool.enabled(&rules));
+            assert_eq!(tool.state(&rules), ToolState::Disabled);
             assert!(!tool.is_used_by(&rules));
         }
     }

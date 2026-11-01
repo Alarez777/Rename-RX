@@ -1,5 +1,5 @@
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 /// Stable identifier for a file in the current batch.
@@ -29,13 +29,17 @@ pub fn split_file_name(name: &str) -> (&str, &str) {
 /// canonicalized: renaming a symlink must rename the link, not its target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileEntry {
+    /// Identifier that is unique within the current batch.
     pub id: FileId,
+    /// Path exactly as it was added, without canonicalization.
     pub path: PathBuf,
+    /// File name as read from the path, converted lossily when it is not UTF-8.
     pub original_name: String,
-    pub stem: String,
-    pub extension: String,
+    /// Creation time, when the filesystem exposes one.
     pub created: Option<SystemTime>,
+    /// Last modification time, when the filesystem exposes one.
     pub modified: Option<SystemTime>,
+    /// File size in bytes.
     pub size: u64,
     /// False when the OS filename is not valid UTF-8. Such files are shown
     /// lossily and will be skipped by renaming.
@@ -46,6 +50,11 @@ impl FileEntry {
     /// Read a file from disk.
     ///
     /// `id` only needs to be unique within the current batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying I/O error when the path cannot be inspected or
+    /// when it does not exist.
     pub fn read(id: FileId, path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         let metadata = std::fs::symlink_metadata(&path)?;
@@ -66,16 +75,10 @@ impl FileEntry {
             ),
         };
 
-        let (stem, extension) = split_file_name(&original_name);
-        let stem = stem.to_owned();
-        let extension = extension.to_owned();
-
         Ok(Self {
             id,
             path,
             original_name,
-            stem,
-            extension,
             created: metadata.created().ok(),
             modified: metadata.modified().ok(),
             size: metadata.len(),
@@ -83,14 +86,27 @@ impl FileEntry {
         })
     }
 
+    /// Base name and extension, derived from [`original_name`].
+    ///
+    /// [`original_name`]: FileEntry::original_name
+    pub fn name_parts(&self) -> (&str, &str) {
+        split_file_name(&self.original_name)
+    }
+
+    /// Base name without its final extension.
+    pub fn stem(&self) -> &str {
+        self.name_parts().0
+    }
+
+    /// Final extension without the leading dot.
+    pub fn extension(&self) -> &str {
+        self.name_parts().1
+    }
+
     /// The date shown in the file table, falling back to the modification
     /// time when the filesystem does not expose a creation time.
     pub fn display_time(&self) -> Option<SystemTime> {
         self.created.or(self.modified)
-    }
-
-    pub fn parent(&self) -> Option<&Path> {
-        self.path.parent()
     }
 }
 
@@ -129,7 +145,7 @@ mod tests {
             entry.original_name,
             path.file_name().unwrap().to_string_lossy()
         );
-        assert_eq!(entry.extension, "txt");
+        assert_eq!(entry.extension(), "txt");
         assert_eq!(entry.size, 5);
         assert!(entry.utf8_name);
 
