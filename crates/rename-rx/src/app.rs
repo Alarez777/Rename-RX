@@ -3002,74 +3002,78 @@ impl<'a, 'context> RuleRow<'a, 'context> {
         let columns = context.columns;
         let mut changed = false;
 
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = columns.gap;
+        // Sibling row UIs share the same scope id, so fixed combo-box salts
+        // would collide across duplicate rows. Scope each row by its index.
+        ui.push_id(("rule_row", meta.index), |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = columns.gap;
 
-            ui.allocate_ui_with_layout(
-                vec2(columns.actions, RULE_ROW_HEIGHT),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.set_width(columns.actions);
+                ui.allocate_ui_with_layout(
+                    vec2(columns.actions, RULE_ROW_HEIGHT),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.set_width(columns.actions);
 
-                    if let Some(action) = meta.action
-                        && rule_action_button(ui, palette, action)
-                    {
-                        context.actions.request = Some(RuleRowRequest {
-                            index: meta.index,
-                            action,
-                        });
-                    }
-                },
-            );
+                        if let Some(action) = meta.action
+                            && rule_action_button(ui, palette, action)
+                        {
+                            context.actions.request = Some(RuleRowRequest {
+                                index: meta.index,
+                                action,
+                            });
+                        }
+                    },
+                );
 
-            ui.allocate_ui_with_layout(
-                vec2(columns.name, RULE_ROW_HEIGHT),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.set_width(columns.name);
+                ui.allocate_ui_with_layout(
+                    vec2(columns.name, RULE_ROW_HEIGHT),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.set_width(columns.name);
 
-                    changed |= ui
-                        .checkbox(enabled, "")
-                        .on_hover_text("Apply this rule")
-                        .changed();
+                        changed |= ui
+                            .checkbox(enabled, "")
+                            .on_hover_text("Apply this rule")
+                            .changed();
 
-                    let text = if *enabled {
-                        RichText::new(name)
-                            .size(13.5)
-                            .color(palette.text)
-                            .font(FontId::new(13.5, semibold()))
-                    } else {
-                        RichText::new(name).size(13.5).color(palette.secondary)
-                    };
-                    ui.add(egui::Label::new(text).truncate());
-                },
-            );
+                        let text = if *enabled {
+                            RichText::new(name)
+                                .size(13.5)
+                                .color(palette.text)
+                                .font(FontId::new(13.5, semibold()))
+                        } else {
+                            RichText::new(name).size(13.5).color(palette.secondary)
+                        };
+                        ui.add(egui::Label::new(text).truncate());
+                    },
+                );
 
-            ui.allocate_ui_with_layout(
-                vec2(columns.controls, RULE_ROW_HEIGHT),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.set_width(columns.controls);
-                    changed |= controls(ui);
-                },
-            );
+                ui.allocate_ui_with_layout(
+                    vec2(columns.controls, RULE_ROW_HEIGHT),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.set_width(columns.controls);
+                        changed |= controls(ui);
+                    },
+                );
 
-            ui.allocate_ui_with_layout(
-                vec2(columns.settings, RULE_ROW_HEIGHT),
-                Layout::right_to_left(Align::Center),
-                |ui| {
-                    ui.set_width(columns.settings);
+                ui.allocate_ui_with_layout(
+                    vec2(columns.settings, RULE_ROW_HEIGHT),
+                    Layout::right_to_left(Align::Center),
+                    |ui| {
+                        ui.set_width(columns.settings);
 
-                    if let Some(kind) = settings
-                        && settings_button(ui, palette, kind)
-                    {
-                        *context.open_settings = Some(RuleSettingsTarget {
-                            index: meta.index,
-                            kind,
-                        });
-                    }
-                },
-            );
+                        if let Some(kind) = settings
+                            && settings_button(ui, palette, kind)
+                        {
+                            *context.open_settings = Some(RuleSettingsTarget {
+                                index: meta.index,
+                                kind,
+                            });
+                        }
+                    },
+                );
+            });
         });
 
         changed
