@@ -19,6 +19,7 @@ use rename_rx_core::{
 
 use crate::settings::{self, Settings, ThemePreference, WindowControlsStyle};
 use crate::theme::{self, Palette, semibold};
+use crate::tools::{Tool, show_tools_used_by};
 
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
@@ -123,6 +124,7 @@ pub struct RenameRxApp {
     preset_error: Option<String>,
     preset_notice: Option<String>,
     preset_delete: Option<String>,
+    tools_open: bool,
     desktop_notice: Option<Notice>,
     file_manager_notice: Option<Notice>,
 }
@@ -173,6 +175,7 @@ impl RenameRxApp {
             preset_error: None,
             preset_notice: None,
             preset_delete: None,
+            tools_open: false,
             desktop_notice: None,
             file_manager_notice: None,
         };
@@ -496,6 +499,7 @@ impl RenameRxApp {
             || self.about_open
             || self.validation_open
             || self.rule_settings.is_some()
+            || self.tools_open
             || self.confirm_rename_open
             || self.rename_error.is_some()
             || egui::Popup::is_any_open(ctx)
@@ -713,9 +717,15 @@ impl RenameRxApp {
                             self.preset_notice = None;
                             self.preset_delete = None;
                         }
-                        let presets_left = presets.rect.left();
                         presets.on_hover_text("Saved rule presets");
-                        drag_right = presets_left - 8.0;
+
+                        let tools = ui.add(Button::new("Tools"));
+                        if tools.clicked() {
+                            self.tools_open = true;
+                        }
+                        let tools_left = tools.rect.left();
+                        tools.on_hover_text("Choose which tools to show");
+                        drag_right = tools_left - 8.0;
                     });
                 });
 
@@ -824,6 +834,21 @@ impl RenameRxApp {
                             gap,
                         };
 
+                        let hidden = self.settings.hidden_tools.clone();
+                        let shows = |tool: Tool| !hidden.contains(&tool);
+
+                        if Tool::ALL.iter().all(|tool| hidden.contains(tool)) {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(
+                                    "All tools are hidden. Use Tools to show them again.",
+                                )
+                                .size(12.0)
+                                .color(palette.secondary),
+                            );
+                            ui.add_space(4.0);
+                        }
+
                         let RuleSet {
                             new_name,
                             replace,
@@ -841,16 +866,18 @@ impl RenameRxApp {
                         } = &mut self.rules;
 
                         let NewNameRule { enabled, value } = new_name;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "New Name",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| text_edit_fill(ui, value, "New base name"),
-                        );
+                        if shows(Tool::NewName) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "New Name",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| text_edit_fill(ui, value, "New base name"),
+                            );
+                        }
 
                         let ReplaceRule {
                             enabled,
@@ -859,16 +886,18 @@ impl RenameRxApp {
                             case_sensitive: _,
                             whole_word: _,
                         } = replace;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Replace",
-                            enabled,
-                            Some(RuleSettings::Replace),
-                            &mut open_settings,
-                            |ui| two_text_fields(ui, find, "Find", replace, "Replace"),
-                        );
+                        if shows(Tool::Replace) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Replace",
+                                enabled,
+                                Some(RuleSettings::Replace),
+                                &mut open_settings,
+                                |ui| two_text_fields(ui, find, "Find", replace, "Replace"),
+                            );
+                        }
 
                         let RegexRule {
                             enabled,
@@ -876,18 +905,26 @@ impl RenameRxApp {
                             replacement,
                             case_insensitive: _,
                         } = regex;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Regular Expression",
-                            enabled,
-                            Some(RuleSettings::Regex),
-                            &mut open_settings,
-                            |ui| {
-                                two_text_fields(ui, pattern, "Pattern", replacement, "Replacement")
-                            },
-                        );
+                        if shows(Tool::Regex) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Regular Expression",
+                                enabled,
+                                Some(RuleSettings::Regex),
+                                &mut open_settings,
+                                |ui| {
+                                    two_text_fields(
+                                        ui,
+                                        pattern,
+                                        "Pattern",
+                                        replacement,
+                                        "Replacement",
+                                    )
+                                },
+                            );
+                        }
 
                         let InsertRule {
                             enabled,
@@ -895,27 +932,29 @@ impl RenameRxApp {
                             position,
                             anchor,
                         } = insert;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Insert",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed =
-                                        spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
-                                    row_changed |= combo_insert_anchor(ui, anchor);
-                                    let text_width = ui.available_width().max(80.0);
-                                    row_changed |=
-                                        text_edit_width(ui, text, text_width, "Text to insert");
-                                    row_changed
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Insert) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Insert",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        let mut row_changed =
+                                            spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
+                                        row_changed |= combo_insert_anchor(ui, anchor);
+                                        let text_width = ui.available_width().max(80.0);
+                                        row_changed |=
+                                            text_edit_width(ui, text, text_width, "Text to insert");
+                                        row_changed
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
 
                         let KeepRule {
                             enabled,
@@ -923,32 +962,34 @@ impl RenameRxApp {
                             origin,
                             position,
                         } = keep;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Keep",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed =
-                                        spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
-                                    row_changed |=
-                                        combo_character_origin(ui, "keep_origin", origin);
-                                    row_changed |= rtl_labeled_spinbox_u32(
-                                        ui,
-                                        "Characters",
-                                        count,
-                                        1..=999,
-                                        SPINBOX_WIDTH,
-                                    );
-                                    row_changed
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Keep) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Keep",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        let mut row_changed =
+                                            spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
+                                        row_changed |=
+                                            combo_character_origin(ui, "keep_origin", origin);
+                                        row_changed |= rtl_labeled_spinbox_u32(
+                                            ui,
+                                            "Characters",
+                                            count,
+                                            1..=999,
+                                            SPINBOX_WIDTH,
+                                        );
+                                        row_changed
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
 
                         let RemoveRule {
                             enabled,
@@ -956,32 +997,34 @@ impl RenameRxApp {
                             origin,
                             position,
                         } = remove;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Remove",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed =
-                                        spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
-                                    row_changed |=
-                                        combo_character_origin(ui, "remove_origin", origin);
-                                    row_changed |= rtl_labeled_spinbox_u32(
-                                        ui,
-                                        "Characters",
-                                        count,
-                                        1..=999,
-                                        SPINBOX_WIDTH,
-                                    );
-                                    row_changed
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Remove) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Remove",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        let mut row_changed =
+                                            spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
+                                        row_changed |=
+                                            combo_character_origin(ui, "remove_origin", origin);
+                                        row_changed |= rtl_labeled_spinbox_u32(
+                                            ui,
+                                            "Characters",
+                                            count,
+                                            1..=999,
+                                            SPINBOX_WIDTH,
+                                        );
+                                        row_changed
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
 
                         let MoveRule {
                             enabled,
@@ -991,34 +1034,40 @@ impl RenameRxApp {
                             destination,
                             offset,
                         } = move_rule;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Move",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed =
-                                        spinbox_u32(ui, offset, 0..=999, SPINBOX_WIDTH);
-                                    row_changed |=
-                                        combo_character_origin(ui, "move_destination", destination);
-                                    row_changed |= rtl_labeled_spinbox_u32(
-                                        ui,
-                                        "Length",
-                                        length,
-                                        1..=999,
-                                        SPINBOX_WIDTH,
-                                    );
-                                    row_changed |= spinbox_u32(ui, start, 0..=999, SPINBOX_WIDTH);
-                                    row_changed |= combo_move_anchor(ui, "move_anchor", anchor);
-                                    row_changed
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Move) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Move",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        let mut row_changed =
+                                            spinbox_u32(ui, offset, 0..=999, SPINBOX_WIDTH);
+                                        row_changed |= combo_character_origin(
+                                            ui,
+                                            "move_destination",
+                                            destination,
+                                        );
+                                        row_changed |= rtl_labeled_spinbox_u32(
+                                            ui,
+                                            "Length",
+                                            length,
+                                            1..=999,
+                                            SPINBOX_WIDTH,
+                                        );
+                                        row_changed |=
+                                            spinbox_u32(ui, start, 0..=999, SPINBOX_WIDTH);
+                                        row_changed |= combo_move_anchor(ui, "move_anchor", anchor);
+                                        row_changed
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
 
                         let SerializeRule {
                             enabled,
@@ -1030,113 +1079,125 @@ impl RenameRxApp {
                             prefix: serialize_prefix,
                             suffix: serialize_suffix,
                         } = serialize;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Serialize",
-                            enabled,
-                            Some(RuleSettings::Serialize),
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed =
-                                        spinbox_u32(ui, offset, 0..=999_999, SPINBOX_WIDTH);
-                                    row_changed |= combo_serialize_position(
-                                        ui,
-                                        position,
-                                        serialize_prefix,
-                                        serialize_suffix,
-                                    );
-                                    row_changed |= rtl_labeled_spinbox_u32(
-                                        ui,
-                                        "Start",
-                                        start,
-                                        0..=999_999,
-                                        SPINBOX_WIDTH,
-                                    );
-                                    row_changed
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Serialize) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Serialize",
+                                enabled,
+                                Some(RuleSettings::Serialize),
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        let mut row_changed =
+                                            spinbox_u32(ui, offset, 0..=999_999, SPINBOX_WIDTH);
+                                        row_changed |= combo_serialize_position(
+                                            ui,
+                                            position,
+                                            serialize_prefix,
+                                            serialize_suffix,
+                                        );
+                                        row_changed |= rtl_labeled_spinbox_u32(
+                                            ui,
+                                            "Start",
+                                            start,
+                                            0..=999_999,
+                                            SPINBOX_WIDTH,
+                                        );
+                                        row_changed
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
 
                         let TextRule { enabled, text } = prefix;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Prefix",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| text_edit_fill(ui, text, "Prefix"),
-                        );
+                        if shows(Tool::Prefix) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Prefix",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| text_edit_fill(ui, text, "Prefix"),
+                            );
+                        }
 
                         let TextRule { enabled, text } = suffix;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Suffix",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| text_edit_fill(ui, text, "Suffix"),
-                        );
+                        if shows(Tool::Suffix) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Suffix",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| text_edit_fill(ui, text, "Suffix"),
+                            );
+                        }
 
                         let ExtensionRule { enabled, value } = extension;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Extension",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| text_edit_fill(ui, value, "e.g. jpg"),
-                        );
+                        if shows(Tool::Extension) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Extension",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| text_edit_fill(ui, value, "e.g. jpg"),
+                            );
+                        }
 
                         let CaseRule { enabled, mode } = case;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Case",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    combo_case_mode(ui, mode)
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Case) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Case",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        combo_case_mode(ui, mode)
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
 
                         let SortRule {
                             enabled,
                             method,
                             descending,
                         } = sort;
-                        changed |= rule_row(
-                            ui,
-                            &palette,
-                            columns,
-                            "Sort",
-                            enabled,
-                            None,
-                            &mut open_settings,
-                            |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let mut row_changed =
-                                        ui.checkbox(descending, "Descending").changed();
-                                    row_changed |= combo_sort_method(ui, method);
-                                    row_changed
-                                })
-                                .inner
-                            },
-                        );
+                        if shows(Tool::Sort) {
+                            changed |= rule_row(
+                                ui,
+                                &palette,
+                                columns,
+                                "Sort",
+                                enabled,
+                                None,
+                                &mut open_settings,
+                                |ui| {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        let mut row_changed =
+                                            ui.checkbox(descending, "Descending").changed();
+                                        row_changed |= combo_sort_method(ui, method);
+                                        row_changed
+                                    })
+                                    .inner
+                                },
+                            );
+                        }
                     });
 
                 ui.painter().hline(
@@ -1934,6 +1995,115 @@ impl RenameRxApp {
         }
     }
 
+    fn tools_modal(&mut self, ctx: &egui::Context) {
+        if !self.tools_open {
+            return;
+        }
+
+        let palette = self.palette();
+        let visible: Vec<Tool> = Tool::ALL
+            .iter()
+            .copied()
+            .filter(|tool| !self.settings.hidden_tools.contains(tool))
+            .collect();
+        let hidden: Vec<Tool> = Tool::ALL
+            .iter()
+            .copied()
+            .filter(|tool| self.settings.hidden_tools.contains(tool))
+            .collect();
+        let mut open = true;
+        let mut toggled: Option<(Tool, bool)> = None;
+
+        let modal = egui::Modal::new(egui::Id::unique("tools_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(560.0);
+
+                ui.label(
+                    RichText::new("Tools")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Choose which tools appear in the rule list.")
+                        .size(12.0)
+                        .color(palette.secondary),
+                );
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        ui.columns(2, |columns| {
+                            tools_column(
+                                &mut columns[0],
+                                &palette,
+                                "Visible",
+                                &visible,
+                                true,
+                                &mut toggled,
+                            );
+                            tools_column(
+                                &mut columns[1],
+                                &palette,
+                                "Hidden",
+                                &hidden,
+                                false,
+                                &mut toggled,
+                            );
+                        });
+                    });
+
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Hidden tools are turned off and keep their settings.")
+                        .size(12.0)
+                        .color(palette.secondary),
+                );
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Close").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(88.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        if let Some((tool, show)) = toggled {
+            if show {
+                self.settings.hidden_tools.remove(&tool);
+            } else {
+                self.settings.hidden_tools.insert(tool);
+                if tool.enabled(&self.rules) {
+                    tool.set_enabled(&mut self.rules, false);
+                    self.preview.dirty = true;
+                    self.selection_anchor = None;
+                }
+            }
+            self.settings.save();
+        }
+
+        self.tools_open = open;
+    }
+
     fn save_preset(&mut self, raw_name: &str) {
         let name = raw_name.trim();
         if name.is_empty() {
@@ -2000,6 +2170,11 @@ impl RenameRxApp {
         };
 
         self.rules = preset.rules;
+
+        if show_tools_used_by(&mut self.settings.hidden_tools, &self.rules) {
+            self.settings.save();
+        }
+
         self.preview.dirty = true;
         self.selection_anchor = None;
         self.presets_open = false;
@@ -2572,6 +2747,7 @@ impl eframe::App for RenameRxApp {
         self.rename_error_modal(&ctx);
         self.settings_modal(&ctx);
         self.presets_modal(&ctx);
+        self.tools_modal(&ctx);
         self.about_modal(&ctx);
         self.drag_overlay(&ctx);
 
@@ -3359,6 +3535,41 @@ fn remove_dolphin_notice() -> Notice {
             text: format!("Could not remove the Dolphin action: {error}"),
             error: true,
         },
+    }
+}
+
+fn tools_column(
+    ui: &mut Ui,
+    palette: &Palette,
+    title: &str,
+    tools: &[Tool],
+    checked: bool,
+    toggled: &mut Option<(Tool, bool)>,
+) {
+    header_label(ui, &format!("{title} ({})", tools.len()), palette);
+    ui.add_space(8.0);
+
+    if tools.is_empty() {
+        ui.label(
+            RichText::new(if checked {
+                "No visible tools."
+            } else {
+                "No hidden tools."
+            })
+            .size(12.0)
+            .color(palette.secondary),
+        );
+        return;
+    }
+
+    ui.spacing_mut().item_spacing.y = 4.0;
+    for &tool in tools {
+        let mut value = checked;
+
+        if ui.checkbox(&mut value, tool.label()).changed() {
+            // Toggling moves the tool to the other column on the next frame.
+            *toggled = Some((tool, !checked));
+        }
     }
 }
 

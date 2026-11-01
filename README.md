@@ -72,6 +72,15 @@ Rules are applied from top to bottom, with per-rule options where needed:
 
 The live preview uses the same pipeline as the actual rename.
 
+### Tool visibility
+
+The **Tools** button next to **Presets** splits the rules into **Visible** and
+**Hidden** columns. Unchecking a tool moves it to **Hidden** and turns it off
+while keeping its values; checking it moves it back to **Visible**. Both columns
+are alphabetical, and the choice is remembered in
+`~/.config/rename-rx/settings.json`. Loading a preset automatically shows every
+tool that preset uses.
+
 ### Presets
 
 The **Presets** view saves the complete rule configuration under a name:

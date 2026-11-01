@@ -8,6 +8,7 @@ mod presets;
 mod settings;
 mod theme;
 mod thunar;
+mod tools;
 
 use std::path::PathBuf;
 

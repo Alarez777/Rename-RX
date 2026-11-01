@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+use crate::tools::Tool;
 
 /// The user's theme preference, persisted between launches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +73,9 @@ impl WindowControlsStyle {
 pub struct Settings {
     pub theme: ThemePreference,
     pub window_controls: WindowControlsStyle,
+    /// Tools hidden from the rule panel. Storing only hidden tools keeps new
+    /// tools visible when they are added in a later version.
+    pub hidden_tools: BTreeSet<Tool>,
 }
 
 impl Settings {
@@ -149,5 +155,32 @@ pub fn mode_to_dark(mode: dark_light::Mode) -> Option<bool> {
         dark_light::Mode::Dark => Some(true),
         dark_light::Mode::Light => Some(false),
         dark_light::Mode::Unspecified => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_without_hidden_tools_show_every_tool() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"theme":"light","window_controls":"adwaita"}"#).unwrap();
+
+        assert!(settings.hidden_tools.is_empty());
+    }
+
+    #[test]
+    fn hidden_tools_round_trip() {
+        let settings = Settings {
+            hidden_tools: BTreeSet::from([Tool::Replace, Tool::Serialize]),
+            ..Settings::default()
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+
+        assert!(json.contains("\"hidden_tools\""));
+        assert_eq!(restored.hidden_tools, settings.hidden_tools);
     }
 }
