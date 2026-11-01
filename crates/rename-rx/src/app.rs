@@ -26,8 +26,7 @@ const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
 const RULE_ROW_HEIGHT: f32 = 34.0;
 const RULE_ACTION_SIZE: f32 = 24.0;
-const RULE_ACTION_GAP: f32 = 4.0;
-const RULE_ACTIONS_WIDTH: f32 = 2.0 * RULE_ACTION_SIZE + RULE_ACTION_GAP;
+const RULE_ACTIONS_WIDTH: f32 = RULE_ACTION_SIZE;
 const BEFORE_AFTER_WIDTH: f32 = 96.0;
 const SPINBOX_WIDTH: f32 = 72.0;
 
@@ -146,14 +145,18 @@ enum RuleActionIcon {
 #[derive(Clone, Copy)]
 struct RuleRowMeta {
     index: usize,
-    can_duplicate: bool,
-    can_remove: bool,
+    action: Option<RuleActionIcon>,
+}
+
+#[derive(Clone, Copy)]
+struct RuleRowRequest {
+    index: usize,
+    action: RuleActionIcon,
 }
 
 #[derive(Default)]
 struct RuleRowActions {
-    duplicate: Option<usize>,
-    remove: Option<usize>,
+    request: Option<RuleRowRequest>,
 }
 
 fn rule_has_settings(rule: &Rule, kind: RuleSettings) -> bool {
@@ -2612,7 +2615,7 @@ fn rule_rows(
     let mut changed = false;
     let removables = removable_rules(rules);
 
-    let (duplicate, remove) = {
+    let request = {
         let mut context = RulePanelContext {
             palette,
             columns,
@@ -2626,11 +2629,16 @@ fn rule_rows(
                 continue;
             }
 
-            let meta = RuleRowMeta {
-                index,
-                can_duplicate: tool.can_duplicate(),
-                can_remove: removables[index],
+            let action = if tool.can_duplicate() {
+                if removables[index] {
+                    Some(RuleActionIcon::Remove)
+                } else {
+                    Some(RuleActionIcon::Add)
+                }
+            } else {
+                None
             };
+            let meta = RuleRowMeta { index, action };
 
             changed |= match rule {
                 Rule::NewName(rule) => new_name_row(ui, &mut context, meta, rule),
@@ -2651,28 +2659,30 @@ fn rule_rows(
         if !hidden.contains(&Tool::Sort) {
             let meta = RuleRowMeta {
                 index: rules.rules().len(),
-                can_duplicate: false,
-                can_remove: false,
+                action: None,
             };
             changed |= sort_row(ui, &mut context, meta, rules.sort_mut());
         }
 
-        (context.actions.duplicate, context.actions.remove)
+        context.actions.request
     };
 
-    if let Some(index) = duplicate
-        && let Some(kind) = rules.rules().get(index).map(Rule::kind)
-    {
-        let mut rule = Rule::default_for(kind);
-        rule.enable();
-        rules.insert(index + 1, rule);
-        changed = true;
-    }
-
-    if let Some(index) = remove
-        && rules.remove(index).is_some()
-    {
-        changed = true;
+    if let Some(request) = request {
+        match request.action {
+            RuleActionIcon::Add => {
+                if let Some(kind) = rules.rules().get(request.index).map(Rule::kind) {
+                    let mut rule = Rule::default_for(kind);
+                    rule.enable();
+                    rules.insert(request.index + 1, rule);
+                    changed = true;
+                }
+            }
+            RuleActionIcon::Remove => {
+                if rules.remove(request.index).is_some() {
+                    changed = true;
+                }
+            }
+        }
     }
 
     changed
@@ -3000,13 +3010,14 @@ impl<'a, 'context> RuleRow<'a, 'context> {
                 Layout::left_to_right(Align::Center),
                 |ui| {
                     ui.set_width(columns.actions);
-                    ui.spacing_mut().item_spacing.x = RULE_ACTION_GAP;
 
-                    if meta.can_duplicate && rule_action_button(ui, palette, RuleActionIcon::Add) {
-                        context.actions.duplicate = Some(meta.index);
-                    }
-                    if meta.can_remove && rule_action_button(ui, palette, RuleActionIcon::Remove) {
-                        context.actions.remove = Some(meta.index);
+                    if let Some(action) = meta.action
+                        && rule_action_button(ui, palette, action)
+                    {
+                        context.actions.request = Some(RuleRowRequest {
+                            index: meta.index,
+                            action,
+                        });
                     }
                 },
             );
