@@ -1399,7 +1399,7 @@ mod tests {
         assert_eq!(rule.offset, 0);
         assert_eq!(rule.padding, 3);
         assert_eq!(rule.position, SerializePosition::Before);
-        assert!(rule.prefix.is_empty());
+        assert_eq!(rule.prefix, "");
         assert_eq!(rule.suffix, " ");
     }
 

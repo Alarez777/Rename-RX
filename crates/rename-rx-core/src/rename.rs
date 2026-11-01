@@ -491,7 +491,7 @@ mod tests {
         }])
         .unwrap();
 
-        assert!(outcomes.is_empty());
+        assert_eq!(outcomes, Vec::new());
         assert!(a.exists());
     }
 }

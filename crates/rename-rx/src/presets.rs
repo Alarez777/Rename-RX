@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn empty_json_and_missing_rule_fields_use_defaults() {
         let store: PresetStore = serde_json::from_str("{}").unwrap();
-        assert!(store.presets.is_empty());
+        assert_eq!(store.presets, Vec::new());
 
         let store: PresetStore =
             serde_json::from_str(r#"{"presets":[{"name":"Old","rules":{}}]}"#).unwrap();
