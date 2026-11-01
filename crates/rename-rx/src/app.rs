@@ -3050,7 +3050,14 @@ impl<'a, 'context> RuleRow<'a, 'context> {
                         } else {
                             RichText::new(name).size(13.5).color(palette.secondary)
                         };
-                        ui.add(egui::Label::new(text).truncate());
+                        let response = ui
+                            .add(egui::Label::new(text).truncate().sense(Sense::click()))
+                            .on_hover_cursor(CursorIcon::PointingHand)
+                            .on_hover_text("Double-click to enable or disable");
+                        if response.double_clicked() {
+                            *enabled = !*enabled;
+                            changed = true;
+                        }
                     },
                 );
 
