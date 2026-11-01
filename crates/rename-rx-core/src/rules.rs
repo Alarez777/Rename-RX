@@ -5,53 +5,317 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::file::FileEntry;
 
 /// All rename rules, in the order they are applied.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "RuleSetWire", into = "RuleSetWire")]
 pub struct RuleSet {
-    /// Replaces the whole base name.
-    pub new_name: NewNameRule,
-    /// Literal text replacement, optionally whole-word.
-    pub replace: ReplaceRule,
-    /// Regular-expression replacement.
-    pub regex: RegexRule,
-    /// Inserts text at a character position.
-    pub insert: InsertRule,
-    /// Keeps only one range of characters.
-    pub keep: KeepRule,
-    /// Removes one range of characters.
-    pub remove: RemoveRule,
-    /// Moves one range of characters elsewhere in the name.
-    pub move_rule: MoveRule,
-    /// Adds a sequential number.
-    pub serialize: SerializeRule,
-    /// Adds a fixed prefix.
-    pub prefix: TextRule,
-    /// Adds a fixed suffix.
-    pub suffix: TextRule,
-    /// Replaces the extension.
-    pub extension: ExtensionRule,
-    /// Changes the case of the base name.
-    pub case: CaseRule,
-    /// Changes the display order and serial-number order.
-    pub sort: SortRule,
+    rules: Vec<Rule>,
+    sort: SortRule,
+}
+
+impl Default for RuleSet {
+    fn default() -> Self {
+        Self {
+            rules: RuleKind::ALL
+                .iter()
+                .copied()
+                .map(Rule::default_for)
+                .collect(),
+            sort: SortRule::default(),
+        }
+    }
 }
 
 impl RuleSet {
+    /// The configured rules, in execution order.
+    pub fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    /// The configured rules, in execution order, for editing.
+    pub fn rules_mut(&mut self) -> &mut [Rule] {
+        &mut self.rules
+    }
+
+    /// The rule that changes the display order and serial-number order.
+    pub fn sort(&self) -> &SortRule {
+        &self.sort
+    }
+
+    /// The ordering rule, for editing.
+    pub fn sort_mut(&mut self) -> &mut SortRule {
+        &mut self.sort
+    }
+
+    /// Inserts `rule` at `index`. An index past the end appends the rule.
+    pub fn insert(&mut self, index: usize, rule: Rule) {
+        let index = index.min(self.rules.len());
+        self.rules.insert(index, rule);
+    }
+
+    /// Removes and returns the rule at `index`, if it exists.
+    pub fn remove(&mut self, index: usize) -> Option<Rule> {
+        if index >= self.rules.len() {
+            return None;
+        }
+
+        Some(self.rules.remove(index))
+    }
+
     /// True when at least one rule can change a file name. Sorting only changes
     /// the order and is deliberately excluded.
     pub fn has_name_effects(&self) -> bool {
-        self.new_name.enabled
-            || self.replace.enabled
-            || self.regex.enabled
-            || self.insert.enabled
-            || self.keep.enabled
-            || self.remove.enabled
-            || self.move_rule.enabled
-            || self.serialize.enabled
-            || self.prefix.enabled
-            || self.suffix.enabled
-            || self.extension.enabled
-            || self.case.enabled
+        self.rules.iter().any(Rule::enabled)
+    }
+
+    /// Rebuild from serialized parts, adding any missing rule kinds.
+    fn from_parts(mut rules: Vec<Rule>, sort: SortRule) -> Self {
+        for kind in RuleKind::ALL {
+            if rules.iter().any(|rule| rule.kind() == kind) {
+                continue;
+            }
+
+            let index = rules
+                .iter()
+                .position(|rule| kind < rule.kind())
+                .unwrap_or(rules.len());
+            rules.insert(index, Rule::default_for(kind));
+        }
+
+        Self { rules, sort }
+    }
+}
+
+/// The serialized form of [`RuleSet`], accepting the pre-list format too.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum RuleSetWire {
+    Current(CurrentRuleSet),
+    Legacy(Box<LegacyRuleSet>),
+}
+
+#[derive(Serialize, Deserialize)]
+struct CurrentRuleSet {
+    rules: Vec<Rule>,
+    #[serde(default)]
+    sort: SortRule,
+}
+
+/// Presets written before rules became an ordered list.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct LegacyRuleSet {
+    new_name: NewNameRule,
+    replace: ReplaceRule,
+    regex: RegexRule,
+    insert: InsertRule,
+    keep: KeepRule,
+    remove: RemoveRule,
+    move_rule: MoveRule,
+    serialize: SerializeRule,
+    prefix: TextRule,
+    suffix: TextRule,
+    extension: ExtensionRule,
+    case: CaseRule,
+    sort: SortRule,
+}
+
+impl From<RuleSet> for RuleSetWire {
+    fn from(value: RuleSet) -> Self {
+        Self::Current(CurrentRuleSet {
+            rules: value.rules,
+            sort: value.sort,
+        })
+    }
+}
+
+impl From<RuleSetWire> for RuleSet {
+    fn from(value: RuleSetWire) -> Self {
+        match value {
+            RuleSetWire::Current(current) => Self::from_parts(current.rules, current.sort),
+            RuleSetWire::Legacy(legacy) => (*legacy).into(),
+        }
+    }
+}
+
+impl From<LegacyRuleSet> for RuleSet {
+    fn from(value: LegacyRuleSet) -> Self {
+        Self::from_parts(
+            vec![
+                Rule::NewName(value.new_name),
+                Rule::Replace(value.replace),
+                Rule::Regex(value.regex),
+                Rule::Insert(value.insert),
+                Rule::Keep(value.keep),
+                Rule::Remove(value.remove),
+                Rule::Move(value.move_rule),
+                Rule::Serialize(value.serialize),
+                Rule::Prefix(value.prefix),
+                Rule::Suffix(value.suffix),
+                Rule::Extension(value.extension),
+                Rule::Case(value.case),
+            ],
+            value.sort,
+        )
+    }
+}
+
+/// One configured rename rule.
+///
+/// Rules run in the order they appear in [`RuleSet`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "tool", content = "config", rename_all = "snake_case")]
+pub enum Rule {
+    /// Replaces the whole base name.
+    NewName(NewNameRule),
+    /// Literal text replacement, optionally whole-word.
+    Replace(ReplaceRule),
+    /// Regular-expression replacement.
+    Regex(RegexRule),
+    /// Inserts text at a character position.
+    Insert(InsertRule),
+    /// Keeps only one range of characters.
+    Keep(KeepRule),
+    /// Removes one range of characters.
+    Remove(RemoveRule),
+    /// Moves one range of characters elsewhere in the name.
+    Move(MoveRule),
+    /// Adds a sequential number.
+    Serialize(SerializeRule),
+    /// Adds a fixed prefix.
+    Prefix(TextRule),
+    /// Adds a fixed suffix.
+    Suffix(TextRule),
+    /// Replaces the extension.
+    Extension(ExtensionRule),
+    /// Changes the case of the base name.
+    Case(CaseRule),
+}
+
+/// The kind of a [`Rule`], without its settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RuleKind {
+    /// Replaces the whole base name.
+    NewName,
+    /// Literal text replacement.
+    Replace,
+    /// Regular-expression replacement.
+    Regex,
+    /// Inserts text.
+    Insert,
+    /// Keeps one range of characters.
+    Keep,
+    /// Removes one range of characters.
+    Remove,
+    /// Moves one range of characters.
+    Move,
+    /// Adds a sequential number.
+    Serialize,
+    /// Adds a fixed prefix.
+    Prefix,
+    /// Adds a fixed suffix.
+    Suffix,
+    /// Replaces the extension.
+    Extension,
+    /// Changes the case.
+    Case,
+}
+
+impl RuleKind {
+    /// Every kind, in the default execution order.
+    pub const ALL: [Self; 12] = [
+        Self::NewName,
+        Self::Replace,
+        Self::Regex,
+        Self::Insert,
+        Self::Keep,
+        Self::Remove,
+        Self::Move,
+        Self::Serialize,
+        Self::Prefix,
+        Self::Suffix,
+        Self::Extension,
+        Self::Case,
+    ];
+}
+
+impl Rule {
+    /// The rule's kind, without its settings.
+    pub const fn kind(&self) -> RuleKind {
+        match self {
+            Self::NewName(_) => RuleKind::NewName,
+            Self::Replace(_) => RuleKind::Replace,
+            Self::Regex(_) => RuleKind::Regex,
+            Self::Insert(_) => RuleKind::Insert,
+            Self::Keep(_) => RuleKind::Keep,
+            Self::Remove(_) => RuleKind::Remove,
+            Self::Move(_) => RuleKind::Move,
+            Self::Serialize(_) => RuleKind::Serialize,
+            Self::Prefix(_) => RuleKind::Prefix,
+            Self::Suffix(_) => RuleKind::Suffix,
+            Self::Extension(_) => RuleKind::Extension,
+            Self::Case(_) => RuleKind::Case,
+        }
+    }
+
+    /// Whether the rule runs during a preview or rename.
+    pub const fn enabled(&self) -> bool {
+        match self {
+            Self::NewName(rule) => rule.enabled,
+            Self::Replace(rule) => rule.enabled,
+            Self::Regex(rule) => rule.enabled,
+            Self::Insert(rule) => rule.enabled,
+            Self::Keep(rule) => rule.enabled,
+            Self::Remove(rule) => rule.enabled,
+            Self::Move(rule) => rule.enabled,
+            Self::Serialize(rule) => rule.enabled,
+            Self::Prefix(rule) | Self::Suffix(rule) => rule.enabled,
+            Self::Extension(rule) => rule.enabled,
+            Self::Case(rule) => rule.enabled,
+        }
+    }
+
+    /// Turns the rule on.
+    pub fn enable(&mut self) {
+        *self.enabled_mut() = true;
+    }
+
+    /// Turns the rule off.
+    pub fn disable(&mut self) {
+        *self.enabled_mut() = false;
+    }
+
+    /// A new rule of `kind` with default settings, switched off.
+    pub fn default_for(kind: RuleKind) -> Self {
+        match kind {
+            RuleKind::NewName => Self::NewName(NewNameRule::default()),
+            RuleKind::Replace => Self::Replace(ReplaceRule::default()),
+            RuleKind::Regex => Self::Regex(RegexRule::default()),
+            RuleKind::Insert => Self::Insert(InsertRule::default()),
+            RuleKind::Keep => Self::Keep(KeepRule::default()),
+            RuleKind::Remove => Self::Remove(RemoveRule::default()),
+            RuleKind::Move => Self::Move(MoveRule::default()),
+            RuleKind::Serialize => Self::Serialize(SerializeRule::default()),
+            RuleKind::Prefix => Self::Prefix(TextRule::default()),
+            RuleKind::Suffix => Self::Suffix(TextRule::default()),
+            RuleKind::Extension => Self::Extension(ExtensionRule::default()),
+            RuleKind::Case => Self::Case(CaseRule::default()),
+        }
+    }
+
+    fn enabled_mut(&mut self) -> &mut bool {
+        match self {
+            Self::NewName(rule) => &mut rule.enabled,
+            Self::Replace(rule) => &mut rule.enabled,
+            Self::Regex(rule) => &mut rule.enabled,
+            Self::Insert(rule) => &mut rule.enabled,
+            Self::Keep(rule) => &mut rule.enabled,
+            Self::Remove(rule) => &mut rule.enabled,
+            Self::Move(rule) => &mut rule.enabled,
+            Self::Serialize(rule) => &mut rule.enabled,
+            Self::Prefix(rule) | Self::Suffix(rule) => &mut rule.enabled,
+            Self::Extension(rule) => &mut rule.enabled,
+            Self::Case(rule) => &mut rule.enabled,
+        }
     }
 }
 
@@ -373,12 +637,17 @@ impl NameParts {
     }
 }
 
+/// One rule paired with its compiled regular expression, when it has one.
+#[derive(Debug)]
+struct CompiledRule<'rules> {
+    rule: &'rules Rule,
+    regex: Option<Regex>,
+}
+
 /// Rules compiled once for a whole preview pass.
 #[derive(Debug)]
 pub struct CompiledRules<'rules> {
-    rules: &'rules RuleSet,
-    regex: Option<Regex>,
-    replace: Option<Regex>,
+    rules: Vec<CompiledRule<'rules>>,
     /// Rule-level problems, such as an invalid regular expression.
     errors: Vec<String>,
 }
@@ -387,47 +656,48 @@ impl<'rules> CompiledRules<'rules> {
     /// Compile the regular expressions and report rule-level problems.
     pub fn new(rules: &'rules RuleSet) -> Self {
         let mut errors = Vec::new();
+        let mut compiled = Vec::with_capacity(rules.rules().len());
 
-        let regex = if rules.regex.enabled && !rules.regex.pattern.is_empty() {
-            match RegexBuilder::new(&rules.regex.pattern)
-                .case_insensitive(rules.regex.case_insensitive)
-                .build()
-            {
-                Ok(regex) => Some(regex),
-                Err(error) => {
-                    errors.push(format!("Regular expression: {error}"));
-                    None
+        for rule in rules.rules() {
+            let regex = match rule {
+                Rule::Regex(rule) if rule.enabled && !rule.pattern.is_empty() => {
+                    match RegexBuilder::new(&rule.pattern)
+                        .case_insensitive(rule.case_insensitive)
+                        .build()
+                    {
+                        Ok(regex) => Some(regex),
+                        Err(error) => {
+                            errors.push(format!("Regular expression: {error}"));
+                            None
+                        }
+                    }
                 }
-            }
-        } else {
-            None
-        };
+                Rule::Replace(rule) if rule.enabled && !rule.find.is_empty() => {
+                    let pattern = if rule.whole_word {
+                        format!(r"\b{}\b", regex::escape(&rule.find))
+                    } else {
+                        regex::escape(&rule.find)
+                    };
 
-        let replace = if rules.replace.enabled && !rules.replace.find.is_empty() {
-            let pattern = if rules.replace.whole_word {
-                format!(r"\b{}\b", regex::escape(&rules.replace.find))
-            } else {
-                regex::escape(&rules.replace.find)
+                    match RegexBuilder::new(&pattern)
+                        .case_insensitive(!rule.case_sensitive)
+                        .build()
+                    {
+                        Ok(regex) => Some(regex),
+                        Err(error) => {
+                            errors.push(format!("Replace rule: {error}"));
+                            None
+                        }
+                    }
+                }
+                _ => None,
             };
 
-            match RegexBuilder::new(&pattern)
-                .case_insensitive(!rules.replace.case_sensitive)
-                .build()
-            {
-                Ok(regex) => Some(regex),
-                Err(error) => {
-                    errors.push(format!("Replace rule: {error}"));
-                    None
-                }
-            }
-        } else {
-            None
-        };
+            compiled.push(CompiledRule { rule, regex });
+        }
 
         Self {
-            rules,
-            regex,
-            replace,
+            rules: compiled,
             errors,
         }
     }
@@ -449,88 +719,99 @@ impl<'rules> CompiledRules<'rules> {
         let mut stem = stem.to_owned();
         let mut extension = extension.to_owned();
 
-        if self.rules.new_name.enabled {
-            stem.clone_from(&self.rules.new_name.value);
-        }
-
-        if let Some(regex) = &self.replace {
-            stem = regex
-                .replace_all(&stem, self.rules.replace.replace.as_str())
-                .into_owned();
-        }
-
-        if let Some(regex) = &self.regex {
-            stem = regex
-                .replace_all(&stem, self.rules.regex.replacement.as_str())
-                .into_owned();
-        }
-
-        if self.rules.insert.enabled && !self.rules.insert.text.is_empty() {
-            stem = insert_text(
-                &stem,
-                &self.rules.insert.text,
-                usize_from(self.rules.insert.position),
-                self.rules.insert.anchor,
-            );
-        }
-
-        if self.rules.keep.enabled && self.rules.keep.count > 0 {
-            stem = keep_text(
-                &stem,
-                usize_from(self.rules.keep.count),
-                self.rules.keep.origin,
-                usize_from(self.rules.keep.position),
-            );
-        }
-
-        if self.rules.remove.enabled && self.rules.remove.count > 0 {
-            stem = remove_chars(
-                &stem,
-                usize_from(self.rules.remove.count),
-                self.rules.remove.origin,
-                usize_from(self.rules.remove.position),
-            );
-        }
-
-        if self.rules.move_rule.enabled && self.rules.move_rule.length > 0 {
-            stem = move_text(
-                &stem,
-                usize_from(self.rules.move_rule.start),
-                usize_from(self.rules.move_rule.length),
-                self.rules.move_rule.anchor,
-                self.rules.move_rule.destination,
-                usize_from(self.rules.move_rule.offset),
-            );
-        }
-
-        if self.rules.serialize.enabled {
-            let number = u64::from(self.rules.serialize.start)
-                + u64::try_from(index).unwrap_or(u64::MAX) * u64::from(self.rules.serialize.step)
-                + u64::from(self.rules.serialize.offset);
-            stem = serialize(
-                &stem,
-                number,
-                self.rules.serialize.padding,
-                self.rules.serialize.position,
-                &self.rules.serialize.prefix,
-                &self.rules.serialize.suffix,
-            );
-        }
-
-        if self.rules.prefix.enabled {
-            stem = format!("{}{stem}", self.rules.prefix.text);
-        }
-
-        if self.rules.suffix.enabled {
-            stem.push_str(&self.rules.suffix.text);
-        }
-
-        if self.rules.extension.enabled {
-            extension = normalize_extension(&self.rules.extension.value);
-        }
-
-        if self.rules.case.enabled {
-            stem = apply_case(&stem, self.rules.case.mode);
+        for compiled in &self.rules {
+            match compiled.rule {
+                Rule::NewName(rule) => {
+                    if rule.enabled {
+                        stem.clone_from(&rule.value);
+                    }
+                }
+                Rule::Replace(rule) => {
+                    if let Some(regex) = &compiled.regex {
+                        stem = regex.replace_all(&stem, rule.replace.as_str()).into_owned();
+                    }
+                }
+                Rule::Regex(rule) => {
+                    if let Some(regex) = &compiled.regex {
+                        stem = regex
+                            .replace_all(&stem, rule.replacement.as_str())
+                            .into_owned();
+                    }
+                }
+                Rule::Insert(rule) => {
+                    if rule.enabled && !rule.text.is_empty() {
+                        stem =
+                            insert_text(&stem, &rule.text, usize_from(rule.position), rule.anchor);
+                    }
+                }
+                Rule::Keep(rule) => {
+                    if rule.enabled && rule.count > 0 {
+                        stem = keep_text(
+                            &stem,
+                            usize_from(rule.count),
+                            rule.origin,
+                            usize_from(rule.position),
+                        );
+                    }
+                }
+                Rule::Remove(rule) => {
+                    if rule.enabled && rule.count > 0 {
+                        stem = remove_chars(
+                            &stem,
+                            usize_from(rule.count),
+                            rule.origin,
+                            usize_from(rule.position),
+                        );
+                    }
+                }
+                Rule::Move(rule) => {
+                    if rule.enabled && rule.length > 0 {
+                        stem = move_text(
+                            &stem,
+                            usize_from(rule.start),
+                            usize_from(rule.length),
+                            rule.anchor,
+                            rule.destination,
+                            usize_from(rule.offset),
+                        );
+                    }
+                }
+                Rule::Serialize(rule) => {
+                    if rule.enabled {
+                        let number = u64::from(rule.start)
+                            + u64::try_from(index).unwrap_or(u64::MAX) * u64::from(rule.step)
+                            + u64::from(rule.offset);
+                        stem = serialize(
+                            &stem,
+                            number,
+                            rule.padding,
+                            rule.position,
+                            &rule.prefix,
+                            &rule.suffix,
+                        );
+                    }
+                }
+                Rule::Prefix(rule) => {
+                    if rule.enabled {
+                        stem = format!("{}{stem}", rule.text);
+                    }
+                }
+                Rule::Suffix(rule) => {
+                    if rule.enabled {
+                        stem.push_str(&rule.text);
+                    }
+                }
+                Rule::Extension(rule) => {
+                    if rule.enabled {
+                        extension = normalize_extension(&rule.value);
+                    }
+                }
+                Rule::Case(rule) => {
+                    if rule.enabled {
+                        stem = apply_case(&stem, rule.mode);
+                    }
+                }
+            }
         }
 
         NameParts { stem, extension }
@@ -727,12 +1008,100 @@ mod tests {
         CompiledRules::new(rules).apply(&entry(name), index)
     }
 
+    fn rule_mut<'a, T>(
+        rules: &'a mut RuleSet,
+        extract: impl FnMut(&'a mut Rule) -> Option<&'a mut T>,
+    ) -> &'a mut T {
+        rules
+            .rules_mut()
+            .iter_mut()
+            .find_map(extract)
+            .expect("the default rule set contains every kind")
+    }
+
+    fn new_name(rules: &mut RuleSet) -> &mut NewNameRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::NewName(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn replace(rules: &mut RuleSet) -> &mut ReplaceRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Replace(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn regex(rules: &mut RuleSet) -> &mut RegexRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Regex(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn keep(rules: &mut RuleSet) -> &mut KeepRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Keep(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn remove(rules: &mut RuleSet) -> &mut RemoveRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Remove(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn move_rule(rules: &mut RuleSet) -> &mut MoveRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Move(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn serialize(rules: &mut RuleSet) -> &mut SerializeRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Serialize(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn prefix(rules: &mut RuleSet) -> &mut TextRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Prefix(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn suffix(rules: &mut RuleSet) -> &mut TextRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Suffix(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn extension(rules: &mut RuleSet) -> &mut ExtensionRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Extension(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn case(rules: &mut RuleSet) -> &mut CaseRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Case(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
     #[test]
     fn new_name_and_serialize() {
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "París Winter 2017".to_owned();
-        rules.serialize.enabled = true;
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "París Winter 2017".to_owned();
+        serialize(&mut rules).enabled = true;
 
         assert_eq!(
             apply(&rules, "HEC-0941.jpg", 0),
@@ -747,13 +1116,13 @@ mod tests {
     #[test]
     fn rule_order_matches_the_interface() {
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "Pic".to_owned();
-        rules.serialize.enabled = true;
-        rules.prefix.enabled = true;
-        rules.prefix.text = "X ".to_owned();
-        rules.suffix.enabled = true;
-        rules.suffix.text = "!".to_owned();
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "Pic".to_owned();
+        serialize(&mut rules).enabled = true;
+        prefix(&mut rules).enabled = true;
+        prefix(&mut rules).text = "X ".to_owned();
+        suffix(&mut rules).enabled = true;
+        suffix(&mut rules).text = "!".to_owned();
 
         assert_eq!(apply(&rules, "a.jpg", 0), "X 001 Pic!.jpg");
     }
@@ -761,23 +1130,23 @@ mod tests {
     #[test]
     fn replace_supports_case_and_words() {
         let mut rules = RuleSet::default();
-        rules.replace.enabled = true;
-        rules.replace.find = "cat".to_owned();
-        rules.replace.replace = "dog".to_owned();
-        rules.replace.case_sensitive = false;
+        replace(&mut rules).enabled = true;
+        replace(&mut rules).find = "cat".to_owned();
+        replace(&mut rules).replace = "dog".to_owned();
+        replace(&mut rules).case_sensitive = false;
 
         assert_eq!(apply(&rules, "Cat catalog.txt", 0), "dog dogalog.txt");
 
-        rules.replace.whole_word = true;
+        replace(&mut rules).whole_word = true;
         assert_eq!(apply(&rules, "Cat catalog.txt", 0), "dog catalog.txt");
     }
 
     #[test]
     fn regex_supports_capture_groups() {
         let mut rules = RuleSet::default();
-        rules.regex.enabled = true;
-        rules.regex.pattern = r"(\d+)".to_owned();
-        rules.regex.replacement = "[$1]".to_owned();
+        regex(&mut rules).enabled = true;
+        regex(&mut rules).pattern = r"(\d+)".to_owned();
+        regex(&mut rules).replacement = "[$1]".to_owned();
 
         assert_eq!(apply(&rules, "IMG 1234.jpg", 0), "IMG [1234].jpg");
     }
@@ -829,7 +1198,7 @@ mod tests {
         assert_eq!(rule.position, 0);
 
         let mut rules = RuleSet::default();
-        rules.keep.enabled = true;
+        keep(&mut rules).enabled = true;
         assert!(rules.has_name_effects());
     }
 
@@ -857,16 +1226,16 @@ mod tests {
     #[test]
     fn keep_runs_before_remove() {
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "abcdef".to_owned();
-        rules.keep.enabled = true;
-        rules.keep.count = 3;
-        rules.keep.origin = CharacterOrigin::Before;
-        rules.keep.position = 1;
-        rules.remove.enabled = true;
-        rules.remove.count = 1;
-        rules.remove.origin = CharacterOrigin::Before;
-        rules.remove.position = 0;
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "abcdef".to_owned();
+        keep(&mut rules).enabled = true;
+        keep(&mut rules).count = 3;
+        keep(&mut rules).origin = CharacterOrigin::Before;
+        keep(&mut rules).position = 1;
+        remove(&mut rules).enabled = true;
+        remove(&mut rules).count = 1;
+        remove(&mut rules).origin = CharacterOrigin::Before;
+        remove(&mut rules).position = 0;
 
         assert_eq!(apply(&rules, "original.txt", 0), "cd.txt");
     }
@@ -882,7 +1251,7 @@ mod tests {
         assert_eq!(rule.offset, 0);
 
         let mut rules = RuleSet::default();
-        rules.move_rule.enabled = true;
+        move_rule(&mut rules).enabled = true;
         assert!(rules.has_name_effects());
     }
 
@@ -964,18 +1333,18 @@ mod tests {
     #[test]
     fn move_runs_after_remove() {
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "abcd".to_owned();
-        rules.remove.enabled = true;
-        rules.remove.count = 1;
-        rules.remove.origin = CharacterOrigin::Before;
-        rules.remove.position = 0;
-        rules.move_rule.enabled = true;
-        rules.move_rule.start = 0;
-        rules.move_rule.length = 1;
-        rules.move_rule.anchor = MoveAnchor::Start;
-        rules.move_rule.destination = CharacterOrigin::After;
-        rules.move_rule.offset = 0;
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "abcd".to_owned();
+        remove(&mut rules).enabled = true;
+        remove(&mut rules).count = 1;
+        remove(&mut rules).origin = CharacterOrigin::Before;
+        remove(&mut rules).position = 0;
+        move_rule(&mut rules).enabled = true;
+        move_rule(&mut rules).start = 0;
+        move_rule(&mut rules).length = 1;
+        move_rule(&mut rules).anchor = MoveAnchor::Start;
+        move_rule(&mut rules).destination = CharacterOrigin::After;
+        move_rule(&mut rules).offset = 0;
 
         assert_eq!(apply(&rules, "original.txt", 0), "cdb.txt");
     }
@@ -983,39 +1352,39 @@ mod tests {
     #[test]
     fn remove_defaults_to_one_character() {
         let mut rules = RuleSet::default();
-        assert_eq!(rules.remove.count, 1);
+        assert_eq!(remove(&mut rules).count, 1);
 
-        rules.remove.enabled = true;
+        remove(&mut rules).enabled = true;
         assert_eq!(apply(&rules, "abcdef.txt", 0), "bcdef.txt");
     }
 
     #[test]
     fn remove_rule_uses_origin_and_position() {
         let mut rules = RuleSet::default();
-        rules.remove.enabled = true;
-        rules.remove.count = 2;
-        rules.remove.position = 1;
+        remove(&mut rules).enabled = true;
+        remove(&mut rules).count = 2;
+        remove(&mut rules).position = 1;
 
         assert_eq!(apply(&rules, "abcdef.txt", 0), "adef.txt");
 
-        rules.remove.origin = CharacterOrigin::After;
-        rules.remove.position = 0;
+        remove(&mut rules).origin = CharacterOrigin::After;
+        remove(&mut rules).position = 0;
         assert_eq!(apply(&rules, "abcdef.txt", 0), "abcd.txt");
     }
 
     #[test]
     fn extension_and_case() {
         let mut rules = RuleSet::default();
-        rules.extension.enabled = true;
-        rules.extension.value = ".PNG".to_owned();
+        extension(&mut rules).enabled = true;
+        extension(&mut rules).value = ".PNG".to_owned();
         assert_eq!(apply(&rules, "photo.jpg", 0), "photo.PNG");
 
-        rules.extension.value.clear();
+        extension(&mut rules).value.clear();
         assert_eq!(apply(&rules, "photo.jpg", 0), "photo");
 
-        rules.extension.enabled = false;
-        rules.case.enabled = true;
-        rules.case.mode = CaseMode::Title;
+        extension(&mut rules).enabled = false;
+        case(&mut rules).enabled = true;
+        case(&mut rules).mode = CaseMode::Title;
         assert_eq!(
             apply(&rules, "HEC-0941 vacation.jpg", 0),
             "Hec-0941 Vacation.jpg"
@@ -1037,13 +1406,13 @@ mod tests {
     #[test]
     fn serialize_supports_position_padding_and_step() {
         let mut rules = RuleSet::default();
-        rules.serialize.enabled = true;
-        rules.serialize.padding = 4;
-        rules.serialize.start = 10;
-        rules.serialize.step = 5;
-        rules.serialize.position = SerializePosition::Before;
-        rules.serialize.prefix.clear();
-        rules.serialize.suffix = "-".to_owned();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).padding = 4;
+        serialize(&mut rules).start = 10;
+        serialize(&mut rules).step = 5;
+        serialize(&mut rules).position = SerializePosition::Before;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
 
         assert_eq!(apply(&rules, "a.txt", 0), "0010-a.txt");
         assert_eq!(apply(&rules, "a.txt", 2), "0020-a.txt");
@@ -1052,9 +1421,9 @@ mod tests {
     #[test]
     fn serialize_offset_is_added_to_the_number() {
         let mut rules = RuleSet::default();
-        rules.serialize.enabled = true;
-        rules.serialize.start = 1;
-        rules.serialize.offset = 2;
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).start = 1;
+        serialize(&mut rules).offset = 2;
 
         assert_eq!(apply(&rules, "photo.jpg", 0), "003 photo.jpg");
         assert_eq!(apply(&rules, "photo.jpg", 1), "004 photo.jpg");
@@ -1063,27 +1432,97 @@ mod tests {
     #[test]
     fn serialize_prefix_and_suffix_wrap_only_the_number() {
         let mut rules = RuleSet::default();
-        rules.serialize.enabled = true;
-        rules.serialize.position = SerializePosition::After;
-        rules.serialize.prefix = " [".to_owned();
-        rules.serialize.suffix = "]".to_owned();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).position = SerializePosition::After;
+        serialize(&mut rules).prefix = " [".to_owned();
+        serialize(&mut rules).suffix = "]".to_owned();
 
         assert_eq!(apply(&rules, "photo.jpg", 0), "photo [001].jpg");
 
-        rules.serialize.position = SerializePosition::Before;
-        rules.serialize.prefix.clear();
-        rules.serialize.suffix = " ".to_owned();
+        serialize(&mut rules).position = SerializePosition::Before;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = " ".to_owned();
         assert_eq!(apply(&rules, "photo.jpg", 0), "001 photo.jpg");
     }
 
     #[test]
     fn invalid_regex_is_reported_not_applied() {
         let mut rules = RuleSet::default();
-        rules.regex.enabled = true;
-        rules.regex.pattern = "(".to_owned();
+        regex(&mut rules).enabled = true;
+        regex(&mut rules).pattern = "(".to_owned();
 
         let compiled = CompiledRules::new(&rules);
         assert_eq!(compiled.errors.len(), 1);
         assert_eq!(compiled.apply(&entry("a.txt"), 0), "a.txt");
+    }
+
+    #[test]
+    fn default_rules_have_every_kind_in_order() {
+        let rules = RuleSet::default();
+        let kinds: Vec<RuleKind> = rules.rules().iter().map(Rule::kind).collect();
+
+        assert_eq!(kinds, RuleKind::ALL);
+        assert!(rules.rules().iter().all(|rule| !rule.enabled()));
+        assert!(!rules.sort().enabled);
+        assert!(!rules.has_name_effects());
+    }
+
+    #[test]
+    fn missing_rule_kinds_are_added_when_rebuilding() {
+        let rules = RuleSet::from_parts(
+            vec![Rule::Replace(ReplaceRule::default())],
+            SortRule::default(),
+        );
+        let kinds: Vec<RuleKind> = rules.rules().iter().map(Rule::kind).collect();
+
+        assert_eq!(kinds, RuleKind::ALL);
+    }
+
+    #[test]
+    fn repeated_rules_run_in_list_order() {
+        let mut rules = RuleSet::default();
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "aa".to_owned();
+
+        let index = rules
+            .rules()
+            .iter()
+            .position(|rule| rule.kind() == RuleKind::Replace)
+            .expect("the default rule set contains Replace");
+        let a_to_b = ReplaceRule {
+            enabled: true,
+            find: "a".to_owned(),
+            replace: "b".to_owned(),
+            ..ReplaceRule::default()
+        };
+        let b_to_c = ReplaceRule {
+            enabled: true,
+            find: "b".to_owned(),
+            replace: "c".to_owned(),
+            ..ReplaceRule::default()
+        };
+
+        rules.insert(index, Rule::Replace(a_to_b.clone()));
+        rules.insert(index + 1, Rule::Replace(b_to_c.clone()));
+        assert_eq!(apply(&rules, "x.txt", 0), "cc.txt");
+
+        let mut reversed = RuleSet::default();
+        new_name(&mut reversed).enabled = true;
+        new_name(&mut reversed).value = "aa".to_owned();
+        reversed.insert(index, Rule::Replace(b_to_c));
+        reversed.insert(index + 1, Rule::Replace(a_to_b));
+        assert_eq!(apply(&reversed, "x.txt", 0), "bb.txt");
+    }
+
+    #[test]
+    fn insert_appends_past_the_end_and_remove_is_bounds_checked() {
+        let mut rules = RuleSet::default();
+        let original_len = rules.rules().len();
+
+        rules.insert(usize::MAX, Rule::default_for(RuleKind::Replace));
+        assert_eq!(rules.rules().len(), original_len + 1);
+        assert!(rules.remove(original_len + 1).is_none());
+        assert!(rules.remove(original_len).is_some());
+        assert_eq!(rules.rules().len(), original_len);
     }
 }

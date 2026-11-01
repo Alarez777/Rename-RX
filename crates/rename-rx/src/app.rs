@@ -13,8 +13,9 @@ use egui_extras::{Column, TableBuilder};
 use rename_rx_core::{
     CaseMode, CaseRule, CharacterOrigin, ExtensionRule, FileEntry, FileId, InsertAnchor,
     InsertRule, KeepRule, MoveAnchor, MoveRule, NewNameRule, RegexRule, RemoveRule, RenameOutcome,
-    RenameStep, ReplaceRule, RuleSet, SerializePosition, SerializeRule, Severity, SortMethod,
-    SortRule, TextRule, ValidationReport, build_preview, execute as execute_rename, plan_steps,
+    RenameStep, ReplaceRule, Rule, RuleKind, RuleSet, SerializePosition, SerializeRule, Severity,
+    SortMethod, SortRule, TextRule, ValidationReport, build_preview, execute as execute_rename,
+    plan_steps,
 };
 
 use crate::settings::{self, Settings, ThemePreference, WindowControlsStyle};
@@ -24,6 +25,9 @@ use crate::tools::{Tool, ToolState, show_tools_used_by};
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
 const RULE_ROW_HEIGHT: f32 = 34.0;
+const RULE_ACTION_SIZE: f32 = 24.0;
+const RULE_ACTION_GAP: f32 = 4.0;
+const RULE_ACTIONS_WIDTH: f32 = 2.0 * RULE_ACTION_SIZE + RULE_ACTION_GAP;
 const BEFORE_AFTER_WIDTH: f32 = 96.0;
 const SPINBOX_WIDTH: f32 = 72.0;
 
@@ -32,6 +36,7 @@ struct RuleColumns {
     name: f32,
     controls: f32,
     settings: f32,
+    actions: f32,
     gap: f32,
 }
 
@@ -125,6 +130,41 @@ impl RuleSettings {
     }
 }
 
+/// The rule instance whose settings modal is open.
+#[derive(Clone, Copy)]
+struct RuleSettingsTarget {
+    index: usize,
+    kind: RuleSettings,
+}
+
+#[derive(Clone, Copy)]
+enum RuleActionIcon {
+    Add,
+    Remove,
+}
+
+#[derive(Clone, Copy)]
+struct RuleRowMeta {
+    index: usize,
+    can_duplicate: bool,
+    can_remove: bool,
+}
+
+#[derive(Default)]
+struct RuleRowActions {
+    duplicate: Option<usize>,
+    remove: Option<usize>,
+}
+
+fn rule_has_settings(rule: &Rule, kind: RuleSettings) -> bool {
+    matches!(
+        (kind, rule),
+        (RuleSettings::Replace, Rule::Replace(_))
+            | (RuleSettings::Regex, Rule::Regex(_))
+            | (RuleSettings::Serialize, Rule::Serialize(_))
+    )
+}
+
 /// Modal dialogs that can be open at the same time.
 #[derive(Default)]
 struct ModalState {
@@ -168,7 +208,7 @@ pub(crate) struct RenameRxApp {
     rename_error: Option<String>,
 
     modals: ModalState,
-    rule_settings: Option<RuleSettings>,
+    rule_settings: Option<RuleSettingsTarget>,
     presets: crate::presets::PresetStore,
     preset_ui: PresetUiState,
     preset_selected: Option<String>,
@@ -870,12 +910,17 @@ impl RenameRxApp {
                             .ceil();
                         let settings_column = 24.0;
                         let available = ui.available_width();
-                        let controls_column =
-                            (available - name_column - settings_column - 2.0 * gap).max(120.0);
+                        let controls_column = (available
+                            - name_column
+                            - settings_column
+                            - RULE_ACTIONS_WIDTH
+                            - 3.0 * gap)
+                            .max(120.0);
                         let columns = RuleColumns {
                             name: name_column,
                             controls: controls_column,
                             settings: settings_column,
+                            actions: RULE_ACTIONS_WIDTH,
                             gap,
                         };
 
@@ -2144,11 +2189,20 @@ impl RenameRxApp {
         reason = "egui layout reads as one declarative block; splitting it scatters widget order"
     )]
     fn rule_settings_modal(&mut self, ctx: &egui::Context) {
-        let Some(kind) = self.rule_settings else {
+        let Some(target) = self.rule_settings else {
             return;
         };
-
+        let kind = target.kind;
         let palette = self.palette();
+
+        let Some(rule) = self.rules.rules_mut().get_mut(target.index) else {
+            self.rule_settings = None;
+            return;
+        };
+        if !rule_has_settings(rule, kind) {
+            self.rule_settings = None;
+            return;
+        }
         let mut open = true;
         let mut changed = false;
 
@@ -2183,25 +2237,23 @@ impl RenameRxApp {
                 ui.scope(|ui| {
                     style_controls(ui, &palette);
 
-                    match kind {
-                        RuleSettings::Replace => {
+                    match (kind, rule) {
+                        (RuleSettings::Replace, Rule::Replace(rule)) => {
                             changed |= ui
-                                .checkbox(&mut self.rules.replace.case_sensitive, "Case sensitive")
+                                .checkbox(&mut rule.case_sensitive, "Case sensitive")
                                 .changed();
+                            changed |= ui.checkbox(&mut rule.whole_word, "Whole word").changed();
+                        }
+                        (RuleSettings::Regex, Rule::Regex(rule)) => {
                             changed |= ui
-                                .checkbox(&mut self.rules.replace.whole_word, "Whole word")
+                                .checkbox(&mut rule.case_insensitive, "Ignore case")
                                 .changed();
                         }
-                        RuleSettings::Regex => {
-                            changed |= ui
-                                .checkbox(&mut self.rules.regex.case_insensitive, "Ignore case")
-                                .changed();
-                        }
-                        RuleSettings::Serialize => {
+                        (RuleSettings::Serialize, Rule::Serialize(rule)) => {
                             changed |= labeled_spinbox_u32(
                                 ui,
                                 "Step",
-                                &mut self.rules.serialize.step,
+                                &mut rule.step,
                                 1..=999,
                                 SPINBOX_WIDTH,
                             );
@@ -2209,20 +2261,18 @@ impl RenameRxApp {
                             changed |= labeled_spinbox_u32(
                                 ui,
                                 "Padding",
-                                &mut self.rules.serialize.padding,
+                                &mut rule.padding,
                                 1..=12,
                                 SPINBOX_WIDTH,
                             );
 
                             ui.add_space(12.0);
                             ui.label(RichText::new("Prefix").size(12.5).color(palette.secondary));
-                            changed |=
-                                text_edit_fill(ui, &mut self.rules.serialize.prefix, "Prefix");
+                            changed |= text_edit_fill(ui, &mut rule.prefix, "Prefix");
 
                             ui.add_space(8.0);
                             ui.label(RichText::new("Suffix").size(12.5).color(palette.secondary));
-                            changed |=
-                                text_edit_fill(ui, &mut self.rules.serialize.suffix, "Suffix");
+                            changed |= text_edit_fill(ui, &mut rule.suffix, "Suffix");
 
                             ui.add_space(6.0);
                             ui.label(
@@ -2234,6 +2284,7 @@ impl RenameRxApp {
                                 .color(palette.secondary),
                             );
                         }
+                        _ => {}
                     }
                 });
 
@@ -2543,95 +2594,133 @@ fn header_label(ui: &mut Ui, text: &str, palette: &Palette) {
     );
 }
 
+struct RulePanelContext<'a> {
+    palette: &'a Palette,
+    columns: RuleColumns,
+    open_settings: &'a mut Option<RuleSettingsTarget>,
+    actions: RuleRowActions,
+}
+
 fn rule_rows(
     ui: &mut Ui,
     palette: &Palette,
     columns: RuleColumns,
     rules: &mut RuleSet,
-    open_settings: &mut Option<RuleSettings>,
+    open_settings: &mut Option<RuleSettingsTarget>,
     hidden: &BTreeSet<Tool>,
 ) -> bool {
-    let shows = |tool: Tool| !hidden.contains(&tool);
     let mut changed = false;
+    let removables = removable_rules(rules);
 
-    let RuleSet {
-        new_name,
-        replace,
-        regex,
-        insert,
-        keep,
-        remove,
-        move_rule,
-        serialize,
-        prefix,
-        suffix,
-        extension,
-        case,
-        sort,
-    } = rules;
+    let (duplicate, remove) = {
+        let mut context = RulePanelContext {
+            palette,
+            columns,
+            open_settings,
+            actions: RuleRowActions::default(),
+        };
 
-    if shows(Tool::NewName) {
-        changed |= new_name_row(ui, palette, columns, new_name, open_settings);
+        for (index, rule) in rules.rules_mut().iter_mut().enumerate() {
+            let tool = tool_for_kind(rule.kind());
+            if hidden.contains(&tool) {
+                continue;
+            }
+
+            let meta = RuleRowMeta {
+                index,
+                can_duplicate: tool.can_duplicate(),
+                can_remove: removables[index],
+            };
+
+            changed |= match rule {
+                Rule::NewName(rule) => new_name_row(ui, &mut context, meta, rule),
+                Rule::Replace(rule) => replace_row(ui, &mut context, meta, rule),
+                Rule::Regex(rule) => regex_row(ui, &mut context, meta, rule),
+                Rule::Insert(rule) => insert_row(ui, &mut context, meta, rule),
+                Rule::Keep(rule) => keep_row(ui, &mut context, meta, rule),
+                Rule::Remove(rule) => remove_rule_row(ui, &mut context, meta, rule),
+                Rule::Move(rule) => move_row(ui, &mut context, meta, rule),
+                Rule::Serialize(rule) => serialize_row(ui, &mut context, meta, rule),
+                Rule::Prefix(rule) => text_row(ui, &mut context, meta, "Prefix", rule),
+                Rule::Suffix(rule) => text_row(ui, &mut context, meta, "Suffix", rule),
+                Rule::Extension(rule) => extension_row(ui, &mut context, meta, rule),
+                Rule::Case(rule) => case_row(ui, &mut context, meta, rule),
+            };
+        }
+
+        if !hidden.contains(&Tool::Sort) {
+            let meta = RuleRowMeta {
+                index: rules.rules().len(),
+                can_duplicate: false,
+                can_remove: false,
+            };
+            changed |= sort_row(ui, &mut context, meta, rules.sort_mut());
+        }
+
+        (context.actions.duplicate, context.actions.remove)
+    };
+
+    if let Some(index) = duplicate
+        && let Some(kind) = rules.rules().get(index).map(Rule::kind)
+    {
+        let mut rule = Rule::default_for(kind);
+        rule.enable();
+        rules.insert(index + 1, rule);
+        changed = true;
     }
-    if shows(Tool::Replace) {
-        changed |= replace_row(ui, palette, columns, replace, open_settings);
-    }
-    if shows(Tool::Regex) {
-        changed |= regex_row(ui, palette, columns, regex, open_settings);
-    }
-    if shows(Tool::Insert) {
-        changed |= insert_row(ui, palette, columns, insert, open_settings);
-    }
-    if shows(Tool::Keep) {
-        changed |= keep_row(ui, palette, columns, keep, open_settings);
-    }
-    if shows(Tool::Remove) {
-        changed |= remove_row(ui, palette, columns, remove, open_settings);
-    }
-    if shows(Tool::Move) {
-        changed |= move_row(ui, palette, columns, move_rule, open_settings);
-    }
-    if shows(Tool::Serialize) {
-        changed |= serialize_row(ui, palette, columns, serialize, open_settings);
-    }
-    if shows(Tool::Prefix) {
-        changed |= text_row(ui, palette, columns, "Prefix", prefix, open_settings);
-    }
-    if shows(Tool::Suffix) {
-        changed |= text_row(ui, palette, columns, "Suffix", suffix, open_settings);
-    }
-    if shows(Tool::Extension) {
-        changed |= extension_row(ui, palette, columns, extension, open_settings);
-    }
-    if shows(Tool::Case) {
-        changed |= case_row(ui, palette, columns, case, open_settings);
-    }
-    if shows(Tool::Sort) {
-        changed |= sort_row(ui, palette, columns, sort, open_settings);
+
+    if let Some(index) = remove
+        && rules.remove(index).is_some()
+    {
+        changed = true;
     }
 
     changed
 }
 
+fn removable_rules(rules: &RuleSet) -> Vec<bool> {
+    let mut seen = BTreeSet::new();
+
+    rules
+        .rules()
+        .iter()
+        .map(|rule| !seen.insert(rule.kind()))
+        .collect()
+}
+
+fn tool_for_kind(kind: RuleKind) -> Tool {
+    match kind {
+        RuleKind::NewName => Tool::NewName,
+        RuleKind::Replace => Tool::Replace,
+        RuleKind::Regex => Tool::Regex,
+        RuleKind::Insert => Tool::Insert,
+        RuleKind::Keep => Tool::Keep,
+        RuleKind::Remove => Tool::Remove,
+        RuleKind::Move => Tool::Move,
+        RuleKind::Serialize => Tool::Serialize,
+        RuleKind::Prefix => Tool::Prefix,
+        RuleKind::Suffix => Tool::Suffix,
+        RuleKind::Extension => Tool::Extension,
+        RuleKind::Case => Tool::Case,
+    }
+}
+
 fn new_name_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut NewNameRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let NewNameRule { enabled, value } = rule;
-    RuleRow::new("New Name", enabled, None, open_settings).show(ui, palette, columns, |ui| {
-        text_edit_fill(ui, value, "New base name")
-    })
+    RuleRow::new("New Name", enabled, None, context, meta)
+        .show(ui, |ui| text_edit_fill(ui, value, "New base name"))
 }
 
 fn replace_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut ReplaceRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let ReplaceRule {
         enabled,
@@ -2644,19 +2733,19 @@ fn replace_row(
         "Replace",
         enabled,
         Some(RuleSettings::Replace),
-        open_settings,
+        context,
+        meta,
     )
-    .show(ui, palette, columns, |ui| {
+    .show(ui, |ui| {
         two_text_fields(ui, find, "Find", replace, "Replace")
     })
 }
 
 fn regex_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut RegexRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let RegexRule {
         enabled,
@@ -2668,19 +2757,19 @@ fn regex_row(
         "Regular Expression",
         enabled,
         Some(RuleSettings::Regex),
-        open_settings,
+        context,
+        meta,
     )
-    .show(ui, palette, columns, |ui| {
+    .show(ui, |ui| {
         two_text_fields(ui, pattern, "Pattern", replacement, "Replacement")
     })
 }
 
 fn insert_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut InsertRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let InsertRule {
         enabled,
@@ -2688,7 +2777,7 @@ fn insert_row(
         position,
         anchor,
     } = rule;
-    RuleRow::new("Insert", enabled, None, open_settings).show(ui, palette, columns, |ui| {
+    RuleRow::new("Insert", enabled, None, context, meta).show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut row_changed = spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
             row_changed |= combo_insert_anchor(ui, anchor);
@@ -2702,10 +2791,9 @@ fn insert_row(
 
 fn keep_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut KeepRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let KeepRule {
         enabled,
@@ -2713,7 +2801,7 @@ fn keep_row(
         origin,
         position,
     } = rule;
-    RuleRow::new("Keep", enabled, None, open_settings).show(ui, palette, columns, |ui| {
+    RuleRow::new("Keep", enabled, None, context, meta).show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut row_changed = spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
             row_changed |= combo_character_origin(ui, "keep_origin", origin);
@@ -2724,12 +2812,11 @@ fn keep_row(
     })
 }
 
-fn remove_row(
+fn remove_rule_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut RemoveRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let RemoveRule {
         enabled,
@@ -2737,7 +2824,7 @@ fn remove_row(
         origin,
         position,
     } = rule;
-    RuleRow::new("Remove", enabled, None, open_settings).show(ui, palette, columns, |ui| {
+    RuleRow::new("Remove", enabled, None, context, meta).show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut row_changed = spinbox_u32(ui, position, 0..=999, SPINBOX_WIDTH);
             row_changed |= combo_character_origin(ui, "remove_origin", origin);
@@ -2750,10 +2837,9 @@ fn remove_row(
 
 fn move_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut MoveRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let MoveRule {
         enabled,
@@ -2763,7 +2849,7 @@ fn move_row(
         destination,
         offset,
     } = rule;
-    RuleRow::new("Move", enabled, None, open_settings).show(ui, palette, columns, |ui| {
+    RuleRow::new("Move", enabled, None, context, meta).show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut row_changed = spinbox_u32(ui, offset, 0..=999, SPINBOX_WIDTH);
             row_changed |= combo_character_origin(ui, "move_destination", destination);
@@ -2778,10 +2864,9 @@ fn move_row(
 
 fn serialize_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut SerializeRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let SerializeRule {
         enabled,
@@ -2797,9 +2882,10 @@ fn serialize_row(
         "Serialize",
         enabled,
         Some(RuleSettings::Serialize),
-        open_settings,
+        context,
+        meta,
     )
-    .show(ui, palette, columns, |ui| {
+    .show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut row_changed = spinbox_u32(ui, offset, 0..=999_999, SPINBOX_WIDTH);
             row_changed |= combo_serialize_position(ui, position, prefix, suffix);
@@ -2812,39 +2898,34 @@ fn serialize_row(
 
 fn text_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     name: &str,
     rule: &mut TextRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let TextRule { enabled, text } = rule;
-    RuleRow::new(name, enabled, None, open_settings)
-        .show(ui, palette, columns, |ui| text_edit_fill(ui, text, name))
+    RuleRow::new(name, enabled, None, context, meta).show(ui, |ui| text_edit_fill(ui, text, name))
 }
 
 fn extension_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut ExtensionRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let ExtensionRule { enabled, value } = rule;
-    RuleRow::new("Extension", enabled, None, open_settings).show(ui, palette, columns, |ui| {
-        text_edit_fill(ui, value, "e.g. jpg")
-    })
+    RuleRow::new("Extension", enabled, None, context, meta)
+        .show(ui, |ui| text_edit_fill(ui, value, "e.g. jpg"))
 }
 
 fn case_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut CaseRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let CaseRule { enabled, mode } = rule;
-    RuleRow::new("Case", enabled, None, open_settings).show(ui, palette, columns, |ui| {
+    RuleRow::new("Case", enabled, None, context, meta).show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             combo_case_mode(ui, mode)
         })
@@ -2854,17 +2935,16 @@ fn case_row(
 
 fn sort_row(
     ui: &mut Ui,
-    palette: &Palette,
-    columns: RuleColumns,
+    context: &mut RulePanelContext<'_>,
+    meta: RuleRowMeta,
     rule: &mut SortRule,
-    open_settings: &mut Option<RuleSettings>,
 ) -> bool {
     let SortRule {
         enabled,
         method,
         descending,
     } = rule;
-    RuleRow::new("Sort", enabled, None, open_settings).show(ui, palette, columns, |ui| {
+    RuleRow::new("Sort", enabled, None, context, meta).show(ui, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let mut row_changed = ui.checkbox(descending, "Descending").changed();
             row_changed |= combo_sort_method(ui, method);
@@ -2875,45 +2955,61 @@ fn sort_row(
 }
 
 /// One row in the rule panel.
-struct RuleRow<'a> {
+struct RuleRow<'a, 'context> {
     name: &'a str,
     enabled: &'a mut bool,
     settings: Option<RuleSettings>,
-    open_settings: &'a mut Option<RuleSettings>,
+    context: &'a mut RulePanelContext<'context>,
+    meta: RuleRowMeta,
 }
 
-impl<'a> RuleRow<'a> {
+impl<'a, 'context> RuleRow<'a, 'context> {
     fn new(
         name: &'a str,
         enabled: &'a mut bool,
         settings: Option<RuleSettings>,
-        open_settings: &'a mut Option<RuleSettings>,
+        context: &'a mut RulePanelContext<'context>,
+        meta: RuleRowMeta,
     ) -> Self {
         Self {
             name,
             enabled,
             settings,
-            open_settings,
+            context,
+            meta,
         }
     }
 
-    fn show(
-        self,
-        ui: &mut Ui,
-        palette: &Palette,
-        columns: RuleColumns,
-        controls: impl FnOnce(&mut Ui) -> bool,
-    ) -> bool {
+    fn show(self, ui: &mut Ui, controls: impl FnOnce(&mut Ui) -> bool) -> bool {
         let Self {
             name,
             enabled,
             settings,
-            open_settings,
+            context,
+            meta,
         } = self;
+        let palette = context.palette;
+        let columns = context.columns;
         let mut changed = false;
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = columns.gap;
+
+            ui.allocate_ui_with_layout(
+                vec2(columns.actions, RULE_ROW_HEIGHT),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.set_width(columns.actions);
+                    ui.spacing_mut().item_spacing.x = RULE_ACTION_GAP;
+
+                    if meta.can_duplicate && rule_action_button(ui, palette, RuleActionIcon::Add) {
+                        context.actions.duplicate = Some(meta.index);
+                    }
+                    if meta.can_remove && rule_action_button(ui, palette, RuleActionIcon::Remove) {
+                        context.actions.remove = Some(meta.index);
+                    }
+                },
+            );
 
             ui.allocate_ui_with_layout(
                 vec2(columns.name, RULE_ROW_HEIGHT),
@@ -2956,7 +3052,10 @@ impl<'a> RuleRow<'a> {
                     if let Some(kind) = settings
                         && settings_button(ui, palette, kind)
                     {
-                        *open_settings = Some(kind);
+                        *context.open_settings = Some(RuleSettingsTarget {
+                            index: meta.index,
+                            kind,
+                        });
                     }
                 },
             );
@@ -2964,6 +3063,55 @@ impl<'a> RuleRow<'a> {
 
         changed
     }
+}
+
+fn rule_action_button(ui: &mut Ui, palette: &Palette, icon: RuleActionIcon) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(RULE_ACTION_SIZE, RULE_ACTION_SIZE), Sense::click());
+
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(5), palette.button_hover);
+    } else if response.is_pointer_button_down_on() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(5), palette.button_active);
+    }
+
+    let hover_color = match icon {
+        RuleActionIcon::Add => palette.accent,
+        RuleActionIcon::Remove => palette.danger,
+    };
+    let color = if response.hovered() {
+        hover_color
+    } else {
+        palette.secondary
+    };
+    let center = rect.center();
+    let half = 4.5;
+    let stroke = Stroke::new(1.6, color);
+    ui.painter().line_segment(
+        [
+            pos2(center.x - half, center.y),
+            pos2(center.x + half, center.y),
+        ],
+        stroke,
+    );
+    if matches!(icon, RuleActionIcon::Add) {
+        ui.painter().line_segment(
+            [
+                pos2(center.x, center.y - half),
+                pos2(center.x, center.y + half),
+            ],
+            stroke,
+        );
+    }
+
+    let clicked = response.clicked();
+    response.on_hover_text(match icon {
+        RuleActionIcon::Add => "Add another rule",
+        RuleActionIcon::Remove => "Remove this rule",
+    });
+    clicked
 }
 
 fn text_edit_fill(ui: &mut Ui, value: &mut String, hint: &str) -> bool {

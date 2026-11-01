@@ -81,20 +81,64 @@ fn write_to(path: &Path, store: &PresetStore) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rename_rx_core::{CharacterOrigin, MoveAnchor, SerializePosition};
+    use rename_rx_core::{
+        CharacterOrigin, KeepRule, MoveAnchor, MoveRule, ReplaceRule, Rule, RuleKind,
+        SerializePosition, SerializeRule, SortMethod,
+    };
+
+    fn rule_mut<'a, T>(
+        rules: &'a mut RuleSet,
+        extract: impl FnMut(&'a mut Rule) -> Option<&'a mut T>,
+    ) -> &'a mut T {
+        rules
+            .rules_mut()
+            .iter_mut()
+            .find_map(extract)
+            .expect("the default rule set contains every kind")
+    }
+
+    fn keep(rules: &mut RuleSet) -> &mut KeepRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Keep(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn move_rule(rules: &mut RuleSet) -> &mut MoveRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Move(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn serialize(rules: &mut RuleSet) -> &mut SerializeRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Serialize(rule) => Some(rule),
+            _ => None,
+        })
+    }
 
     fn sample_rules() -> RuleSet {
         let mut rules = RuleSet::default();
-        rules.keep.enabled = true;
-        rules.keep.count = 3;
-        rules.keep.origin = CharacterOrigin::After;
-        rules.move_rule.enabled = true;
-        rules.move_rule.start = 1;
-        rules.move_rule.length = 2;
-        rules.move_rule.anchor = MoveAnchor::End;
-        rules.serialize.enabled = true;
-        rules.serialize.padding = 4;
-        rules.serialize.position = SerializePosition::Before;
+        keep(&mut rules).enabled = true;
+        keep(&mut rules).count = 3;
+        keep(&mut rules).origin = CharacterOrigin::After;
+        move_rule(&mut rules).enabled = true;
+        move_rule(&mut rules).start = 1;
+        move_rule(&mut rules).length = 2;
+        move_rule(&mut rules).anchor = MoveAnchor::End;
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).padding = 4;
+        serialize(&mut rules).position = SerializePosition::Before;
+
+        // Duplicates are part of the persisted state.
+        let extra = ReplaceRule {
+            enabled: true,
+            find: "a".to_owned(),
+            replace: "b".to_owned(),
+            ..ReplaceRule::default()
+        };
+        rules.insert(2, Rule::Replace(extra));
         rules
     }
 
@@ -128,6 +172,41 @@ mod tests {
             serde_json::from_str(r#"{"presets":[{"name":"Old","rules":{}}]}"#).unwrap();
         assert_eq!(store.presets.len(), 1);
         assert_eq!(store.presets[0].rules, RuleSet::default());
+    }
+
+    #[test]
+    fn legacy_presets_load_into_ordered_rules() {
+        let json = r#"{
+            "presets": [{
+                "name": "Old",
+                "rules": {
+                    "replace": {"enabled": true, "find": "a", "replace": "b"},
+                    "sort": {"enabled": true, "method": "name"}
+                }
+            }]
+        }"#;
+        let store: PresetStore = serde_json::from_str(json).unwrap();
+        let rules = &store.presets[0].rules;
+
+        assert_eq!(rules.rules().len(), RuleKind::ALL.len());
+        assert_eq!(rules.rules()[1].kind(), RuleKind::Replace);
+        let Rule::Replace(replace) = &rules.rules()[1] else {
+            panic!("the legacy Replace rule keeps its position");
+        };
+        assert!(replace.enabled);
+        assert_eq!(replace.find, "a");
+        assert_eq!(replace.replace, "b");
+        assert!(rules.sort().enabled);
+        assert_eq!(rules.sort().method, SortMethod::Name);
+    }
+
+    #[test]
+    fn new_presets_store_the_ordered_rule_list() {
+        let json = serde_json::to_string(&sample_rules()).unwrap();
+
+        assert!(json.contains("\"rules\":["));
+        assert!(json.contains("\"tool\":\"replace\""));
+        assert!(json.contains("\"sort\":"));
     }
 
     #[test]

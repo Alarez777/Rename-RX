@@ -75,7 +75,7 @@ pub struct PreviewResult {
 
 /// Compute the display order, every preview name, and the validation report.
 pub fn build_preview(files: &[FileEntry], rules: &RuleSet) -> PreviewResult {
-    let order = sorted_indices(files, &rules.sort);
+    let order = sorted_indices(files, rules.sort());
     let compiled = CompiledRules::new(rules);
     let mut previews = vec![String::new(); files.len()];
     let mut parts = vec![NameParts::default(); files.len()];
@@ -417,6 +417,9 @@ fn is_reserved_windows_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::{
+        ExtensionRule, NewNameRule, RegexRule, ReplaceRule, Rule, SerializeRule, TextRule,
+    };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -465,6 +468,59 @@ mod tests {
         }
     }
 
+    fn rule_mut<'a, T>(
+        rules: &'a mut RuleSet,
+        extract: impl FnMut(&'a mut Rule) -> Option<&'a mut T>,
+    ) -> &'a mut T {
+        rules
+            .rules_mut()
+            .iter_mut()
+            .find_map(extract)
+            .expect("the default rule set contains every kind")
+    }
+
+    fn new_name(rules: &mut RuleSet) -> &mut NewNameRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::NewName(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn replace(rules: &mut RuleSet) -> &mut ReplaceRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Replace(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn regex(rules: &mut RuleSet) -> &mut RegexRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Regex(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn serialize(rules: &mut RuleSet) -> &mut SerializeRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Serialize(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn prefix(rules: &mut RuleSet) -> &mut TextRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Prefix(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    fn extension(rules: &mut RuleSet) -> &mut ExtensionRule {
+        rule_mut(rules, |rule| match rule {
+            Rule::Extension(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
     #[test]
     fn sorts_and_serializes_in_display_order() {
         let files = vec![
@@ -473,9 +529,9 @@ mod tests {
             fake_entry(2, "B.txt"),
         ];
         let mut rules = RuleSet::default();
-        rules.sort.enabled = true;
-        rules.sort.method = SortMethod::Name;
-        rules.serialize.enabled = true;
+        rules.sort_mut().enabled = true;
+        rules.sort_mut().method = SortMethod::Name;
+        serialize(&mut rules).enabled = true;
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.order, vec![1, 2, 0]);
@@ -488,10 +544,10 @@ mod tests {
     fn descending_sort_reverses_the_serial_numbers() {
         let files = vec![fake_entry(0, "A.txt"), fake_entry(1, "B.txt")];
         let mut rules = RuleSet::default();
-        rules.sort.enabled = true;
-        rules.sort.method = SortMethod::Name;
-        rules.sort.descending = true;
-        rules.serialize.enabled = true;
+        rules.sort_mut().enabled = true;
+        rules.sort_mut().method = SortMethod::Name;
+        rules.sort_mut().descending = true;
+        serialize(&mut rules).enabled = true;
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.order, vec![1, 0]);
@@ -511,8 +567,8 @@ mod tests {
         let temp = TempDir::new();
         let files = vec![temp.add(0, "a.txt"), temp.add(1, "b.txt")];
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "same".to_owned();
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "same".to_owned();
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.report.errors(), 2);
@@ -532,8 +588,8 @@ mod tests {
         temp.touch("taken.txt");
 
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "taken".to_owned();
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "taken".to_owned();
 
         let result = build_preview(&[file], &rules);
         assert_eq!(result.report.errors(), 1);
@@ -552,8 +608,8 @@ mod tests {
         let file = temp.add(0, "a.txt");
 
         let mut rules = RuleSet::default();
-        rules.new_name.enabled = true;
-        rules.new_name.value = "bad/name".to_owned();
+        new_name(&mut rules).enabled = true;
+        new_name(&mut rules).value = "bad/name".to_owned();
         let result = build_preview(std::slice::from_ref(&file), &rules);
         assert!(result.report.errors() >= 1);
         assert!(
@@ -564,7 +620,7 @@ mod tests {
                 .any(|issue| issue.message.contains("path separator"))
         );
 
-        rules.new_name.value.clear();
+        new_name(&mut rules).value.clear();
         let result = build_preview(std::slice::from_ref(&file), &rules);
         assert!(
             result
@@ -574,8 +630,8 @@ mod tests {
                 .any(|issue| issue.message.contains("no base name"))
         );
 
-        rules.extension.enabled = true;
-        rules.extension.value.clear();
+        extension(&mut rules).enabled = true;
+        extension(&mut rules).value.clear();
         let result = build_preview(std::slice::from_ref(&file), &rules);
         assert!(
             result
@@ -609,9 +665,9 @@ mod tests {
         let files = vec![temp.add(0, "a.txt"), temp.add(1, "b.txt")];
 
         let mut rules = RuleSet::default();
-        rules.replace.enabled = true;
-        rules.replace.find = "a".to_owned();
-        rules.replace.replace = "b".to_owned();
+        replace(&mut rules).enabled = true;
+        replace(&mut rules).find = "a".to_owned();
+        replace(&mut rules).replace = "b".to_owned();
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.previews[0], "b.txt");
@@ -628,8 +684,8 @@ mod tests {
     #[test]
     fn invalid_regex_is_a_rule_error() {
         let mut rules = RuleSet::default();
-        rules.regex.enabled = true;
-        rules.regex.pattern = "(".to_owned();
+        regex(&mut rules).enabled = true;
+        regex(&mut rules).pattern = "(".to_owned();
 
         let result = build_preview(&[], &rules);
         assert_eq!(result.report.errors(), 1);
@@ -645,7 +701,7 @@ mod tests {
         assert_eq!(result.report.infos(), 0);
 
         let mut rules = RuleSet::default();
-        rules.prefix.enabled = true;
+        prefix(&mut rules).enabled = true;
         let result = build_preview(std::slice::from_ref(&file), &rules);
         assert_eq!(result.report.infos(), 1);
     }

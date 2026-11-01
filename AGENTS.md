@@ -62,6 +62,8 @@ print or log.
 ## Behavior invariants
 
 - The live preview and the real rename use the same rule pipeline.
+- `RuleSet` is an ordered list: the order shown in the rule panel is the order
+  rules run in. Presets keep that list and still load the pre-list format.
 - Rename is transactional: every source is staged first, then finalized, with
   rollback on failure. Do not replace this with a per-file rename loop.
 - Validation output is deterministic. Do not introduce `HashMap` iteration into

@@ -14,5 +14,5 @@ pub use rename::{RenameError, RenameOutcome, RenameStep, execute, plan_steps};
 pub use rules::{
     CaseMode, CaseRule, CharacterOrigin, CompiledRules, ExtensionRule, InsertAnchor, InsertRule,
     KeepRule, MoveAnchor, MoveRule, NameParts, NewNameRule, RegexRule, RemoveRule, ReplaceRule,
-    RuleSet, SerializePosition, SerializeRule, SortMethod, SortRule, TextRule,
+    Rule, RuleKind, RuleSet, SerializePosition, SerializeRule, SortMethod, SortRule, TextRule,
 };
