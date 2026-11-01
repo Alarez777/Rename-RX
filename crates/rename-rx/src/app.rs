@@ -2671,6 +2671,12 @@ fn rule_rows(
         match request.action {
             RuleActionIcon::Add => {
                 if let Some(kind) = rules.rules().get(request.index).map(Rule::kind) {
+                    // Pressing + means the rule type is wanted, so the source
+                    // row must be active too.
+                    if let Some(source) = rules.rules_mut().get_mut(request.index) {
+                        source.enable();
+                    }
+
                     let mut rule = Rule::default_for(kind);
                     rule.enable();
                     rules.insert(request.index + 1, rule);
