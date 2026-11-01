@@ -70,6 +70,11 @@ Rules are applied from top to bottom, with per-rule options where needed:
 - Case (lowercase, title case, uppercase)
 - Sort (original order, name, created, modified; ascending/descending)
 
+Rules can be enabled or disabled with their checkbox or by double-clicking the
+rule name. Rules that can repeat show a `+` button on the first instance; each
+duplicate is inserted below and shows a `−` to remove it. The order shown in the
+panel is the execution order.
+
 The live preview uses the same pipeline as the actual rename.
 
 ### Tool visibility
