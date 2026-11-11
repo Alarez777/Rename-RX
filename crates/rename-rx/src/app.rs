@@ -94,6 +94,21 @@ enum SpinDirection {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct SpinPress {
+    down_on_arrow: bool,
+    was_held: bool,
+    primary_down: bool,
+}
+
+impl SpinPress {
+    fn holds_arrow(self) -> bool {
+        // egui clears its click state after `max_click_duration` (0.8 s), but
+        // the pointer can still be down on the arrow we started holding.
+        self.down_on_arrow || (self.was_held && self.primary_down)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 struct SpinHold {
     repeat_at: f64,
     last_step_at: Option<f64>,
@@ -3329,7 +3344,13 @@ fn spin_arrow(ui: &mut Ui, direction: SpinDirection) -> bool {
         .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
 
     let now = ui.input(|input| input.time);
-    let (stepped, repaint_in) = if response.is_pointer_button_down_on() {
+    let was_held = ui.data(|data| data.get_temp::<SpinHold>(response.id).is_some());
+    let press = SpinPress {
+        down_on_arrow: response.is_pointer_button_down_on(),
+        was_held,
+        primary_down: ui.input(|input| input.pointer.primary_down()),
+    };
+    let (stepped, repaint_in) = if press.holds_arrow() {
         let (stepped, repaint_in) = ui.data_mut(|data| {
             let hold = data.get_temp_mut_or_insert_with(response.id, || SpinHold::new(now));
             let stepped = hold.step_due(now);
@@ -3340,13 +3361,9 @@ fn spin_arrow(ui: &mut Ui, direction: SpinDirection) -> bool {
         });
         (stepped, Some(repaint_in))
     } else {
+        ui.data_mut(|data| data.remove::<SpinHold>(response.id));
         // A pointer click already stepped on press, so suppress the click that
         // egui reports when the button is released.
-        let was_held = ui.data_mut(|data| {
-            let held = data.get_temp::<SpinHold>(response.id).is_some();
-            data.remove::<SpinHold>(response.id);
-            held
-        });
         (!was_held && response.clicked(), None)
     };
 
@@ -4056,6 +4073,47 @@ fn paint_empty_icon(ui: &mut Ui, palette: &Palette) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spin_hold_survives_the_egui_click_window() {
+        let started_on_arrow = SpinPress {
+            down_on_arrow: true,
+            was_held: false,
+            primary_down: true,
+        };
+        let after_click_window = SpinPress {
+            down_on_arrow: false,
+            was_held: true,
+            primary_down: true,
+        };
+        let released = SpinPress {
+            down_on_arrow: false,
+            was_held: true,
+            primary_down: false,
+        };
+        let started_elsewhere = SpinPress {
+            down_on_arrow: false,
+            was_held: false,
+            primary_down: true,
+        };
+
+        assert!(
+            started_on_arrow.holds_arrow(),
+            "a press on the arrow must start the hold"
+        );
+        assert!(
+            after_click_window.holds_arrow(),
+            "the hold must continue after egui stops seeing a click"
+        );
+        assert!(
+            !released.holds_arrow(),
+            "releasing the button must stop the hold"
+        );
+        assert!(
+            !started_elsewhere.holds_arrow(),
+            "another widget's press must not start this arrow"
+        );
+    }
 
     #[test]
     fn spin_hold_steps_immediately_on_press() {
