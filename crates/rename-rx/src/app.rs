@@ -29,6 +29,10 @@ const RULE_ACTION_SIZE: f32 = 24.0;
 const RULE_ACTIONS_WIDTH: f32 = RULE_ACTION_SIZE;
 const BEFORE_AFTER_WIDTH: f32 = 96.0;
 const SPINBOX_WIDTH: f32 = 72.0;
+/// Delay before a held spin arrow starts repeating, in seconds.
+const SPIN_HOLD_DELAY_SECS: f64 = 0.4;
+/// Interval between repeated steps while a spin arrow is held, in seconds.
+const SPIN_HOLD_INTERVAL_SECS: f64 = 0.06;
 
 #[derive(Clone, Copy)]
 struct RuleColumns {
@@ -87,6 +91,43 @@ enum WindowControlIcon {
 enum SpinDirection {
     Up,
     Down,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SpinHold {
+    repeat_at: f64,
+    last_step_at: Option<f64>,
+}
+
+impl SpinHold {
+    fn new(now: f64) -> Self {
+        Self {
+            repeat_at: now + SPIN_HOLD_DELAY_SECS,
+            last_step_at: None,
+        }
+    }
+
+    fn next_step_at(&self) -> Option<f64> {
+        match self.last_step_at {
+            None => None,
+            Some(last_step_at) if last_step_at < self.repeat_at => Some(self.repeat_at),
+            Some(last_step_at) => Some(last_step_at + SPIN_HOLD_INTERVAL_SECS),
+        }
+    }
+
+    fn step_due(&self, now: f64) -> bool {
+        self.next_step_at().is_none_or(|deadline| now >= deadline)
+    }
+
+    fn record_step(&mut self, now: f64) {
+        self.last_step_at = Some(now);
+    }
+
+    fn next_repaint_in(&self, now: f64) -> Duration {
+        self.next_step_at().map_or(Duration::ZERO, |deadline| {
+            Duration::from_secs_f64((deadline - now).max(0.0))
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3240,12 +3281,18 @@ fn spinbox_u32(ui: &mut Ui, value: &mut u32, range: RangeInclusive<u32>, width: 
                 ui.spacing_mut().item_spacing.y = 0.0;
 
                 if spin_arrow(ui, SpinDirection::Up) {
-                    *value = (*value + 1).min(max);
-                    changed = true;
+                    let next = (*value + 1).min(max);
+                    if next != *value {
+                        *value = next;
+                        changed = true;
+                    }
                 }
                 if spin_arrow(ui, SpinDirection::Down) {
-                    *value = (*value).saturating_sub(1).max(min);
-                    changed = true;
+                    let next = (*value).saturating_sub(1).max(min);
+                    if next != *value {
+                        *value = next;
+                        changed = true;
+                    }
                 }
             });
         },
@@ -3281,7 +3328,33 @@ fn spin_arrow(ui: &mut Ui, direction: SpinDirection) -> bool {
     ui.painter()
         .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
 
-    response.clicked()
+    let now = ui.input(|input| input.time);
+    let (stepped, repaint_in) = if response.is_pointer_button_down_on() {
+        let (stepped, repaint_in) = ui.data_mut(|data| {
+            let hold = data.get_temp_mut_or_insert_with(response.id, || SpinHold::new(now));
+            let stepped = hold.step_due(now);
+            if stepped {
+                hold.record_step(now);
+            }
+            (stepped, hold.next_repaint_in(now))
+        });
+        (stepped, Some(repaint_in))
+    } else {
+        // A pointer click already stepped on press, so suppress the click that
+        // egui reports when the button is released.
+        let was_held = ui.data_mut(|data| {
+            let held = data.get_temp::<SpinHold>(response.id).is_some();
+            data.remove::<SpinHold>(response.id);
+            held
+        });
+        (!was_held && response.clicked(), None)
+    };
+
+    if let Some(repaint_in) = repaint_in {
+        ui.ctx().request_repaint_after(repaint_in);
+    }
+
+    stepped
 }
 
 fn settings_button(ui: &mut Ui, palette: &Palette, kind: RuleSettings) -> bool {
@@ -3978,4 +4051,52 @@ fn paint_empty_icon(ui: &mut Ui, palette: &Palette) {
         [badge_center - vec2(0.0, 8.0), badge_center + vec2(0.0, 8.0)],
         Stroke::new(2.5, palette.on_accent),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spin_hold_steps_immediately_on_press() {
+        let hold = SpinHold::new(10.0);
+        assert!(
+            hold.step_due(10.0),
+            "the first press must step without waiting"
+        );
+    }
+
+    #[test]
+    fn spin_hold_waits_before_repeating() {
+        let mut hold = SpinHold::new(10.0);
+        hold.record_step(10.0);
+
+        assert!(
+            !hold.step_due(10.0 + SPIN_HOLD_DELAY_SECS - 0.001),
+            "the hold must wait for the initial delay"
+        );
+        assert!(
+            hold.step_due(10.0 + SPIN_HOLD_DELAY_SECS + 0.001),
+            "the first repeat must fire after the initial delay"
+        );
+    }
+
+    #[test]
+    fn spin_hold_repeats_at_the_configured_interval() {
+        let mut hold = SpinHold::new(10.0);
+        hold.record_step(10.0);
+
+        let repeat_at = 10.0 + SPIN_HOLD_DELAY_SECS;
+        assert!(hold.step_due(repeat_at), "the first repeat must be due");
+        hold.record_step(repeat_at);
+
+        assert!(
+            !hold.step_due(repeat_at + SPIN_HOLD_INTERVAL_SECS / 2.0),
+            "repeats must not run faster than the interval"
+        );
+        assert!(
+            hold.step_due(repeat_at + SPIN_HOLD_INTERVAL_SECS + 0.001),
+            "the next repeat must fire after the interval"
+        );
+    }
 }
