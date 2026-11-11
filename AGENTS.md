@@ -6,13 +6,16 @@ application with a UI-independent core crate.
 ## Rust skills
 
 This project follows [Beautiful Rust](https://github.com/morganlinton/BeautifulRust).
+The skills live in `.agents/skills/` (the cross-agent Agent Skills standard),
+copied from upstream commit `b971843` without the upstream `evals/` folders.
 
-- Load the `rust-best-practices` skill before writing, changing, refactoring, or
-  reviewing Rust code.
+- **Always load `rust-best-practices` before writing or changing anything.**
+  Every Rust edit — new code, refactors, tests, `Cargo.toml`, doc comments —
+  must follow it. This is mandatory regardless of change size.
 - Load the `rust-review` skill when the task is an audit, a review, or a
   prioritized list of findings.
-- Do not use the `rust-port` skill here. This is a Rust-only codebase; there is
-  no code being ported from another language.
+- `rust-port` is installed for the user's migrations only. Do not use it
+  unprompted: this is a Rust-only codebase, with no code being ported in.
 
 ## Workspace layout
 
@@ -39,6 +42,17 @@ cargo doc --no-deps -p rename-rx-core
 Fix findings instead of silencing them. When a lint is genuinely wrong for one
 item, use the narrowest `#[expect(clippy::lint, reason = "...")]`. Do not add
 `#![deny(warnings)]` to source; CI turns warnings into errors.
+
+## Merging into `develop`
+
+No branch may be merged into `develop` until `rust-review` has run on its
+changes.
+
+1. Review the branch diff against `develop` (`git diff develop...HEAD`).
+2. Run the `rust-review` skill with that diff as the scope.
+3. Fix every must-fix finding and re-run the required checks before merging.
+
+Report the review outcome in the PR description or merge commit.
 
 ## Lint policy
 
