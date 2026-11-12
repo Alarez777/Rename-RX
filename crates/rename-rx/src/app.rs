@@ -32,7 +32,7 @@ const SPINBOX_WIDTH: f32 = 72.0;
 /// Delay before a held spin arrow starts repeating, in seconds.
 const SPIN_HOLD_DELAY_SECS: f64 = 0.4;
 /// Interval between repeated steps while a spin arrow is held, in seconds.
-const SPIN_HOLD_INTERVAL_SECS: f64 = 0.06;
+const SPIN_HOLD_INTERVAL_SECS: f64 = 0.08;
 
 #[derive(Clone, Copy)]
 struct RuleColumns {
@@ -104,7 +104,7 @@ impl SpinPress {
     fn holds_arrow(self) -> bool {
         // egui clears its click state after `max_click_duration` (0.8 s), but
         // the pointer can still be down on the arrow we started holding.
-        self.down_on_arrow || (self.was_held && self.primary_down)
+        self.primary_down && (self.down_on_arrow || self.was_held)
     }
 }
 
@@ -4096,6 +4096,11 @@ mod tests {
             was_held: false,
             primary_down: true,
         };
+        let secondary_press = SpinPress {
+            down_on_arrow: true,
+            was_held: false,
+            primary_down: false,
+        };
 
         assert!(
             started_on_arrow.holds_arrow(),
@@ -4112,6 +4117,10 @@ mod tests {
         assert!(
             !started_elsewhere.holds_arrow(),
             "another widget's press must not start this arrow"
+        );
+        assert!(
+            !secondary_press.holds_arrow(),
+            "only the primary button may start or continue a hold"
         );
     }
 
