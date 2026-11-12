@@ -7,9 +7,9 @@ use chrono::{DateTime, Local};
 use eframe::egui::{
     self, Align, Align2, Button, Color32, ComboBox, CornerRadius, CursorIcon, FontFamily, FontId,
     Frame, Key, LayerId, Layout, Margin, Modifiers, Order, Rect, ResizeDirection, RichText, Sense,
-    Shadow, Stroke, StrokeKind, TextEdit, Theme, Ui, ViewportCommand, pos2, vec2,
+    Shadow, Stroke, StrokeKind, TextEdit, TextStyle, Theme, Ui, ViewportCommand, pos2, vec2,
 };
-use egui_extras::{Column, TableBuilder};
+use egui_extras::{Column, TableBuilder, TableRow};
 use rename_rx_core::{
     CaseMode, CaseRule, CharacterOrigin, ExtensionRule, FileEntry, FileId, InsertAnchor,
     InsertRule, KeepRule, MoveAnchor, MoveRule, NewNameRule, RegexRule, RemoveRule, RenameOutcome,
@@ -24,6 +24,16 @@ use crate::tools::{Tool, ToolState, show_tools_used_by};
 
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
+const INDEX_COLUMN_WIDTH: f32 = 42.0;
+const ORIGINAL_COLUMN_DEFAULT_WIDTH: f32 = 280.0;
+const ORIGINAL_COLUMN_MIN_WIDTH: f32 = 150.0;
+const TYPE_COLUMN_WIDTH: f32 = 78.0;
+const PREVIEW_MIN_WIDTH: f32 = 160.0;
+const CREATED_COLUMN_WIDTH: f32 = 104.0;
+const FILE_TABLE_FIXED_WIDTH: f32 = INDEX_COLUMN_WIDTH + TYPE_COLUMN_WIDTH + CREATED_COLUMN_WIDTH;
+const COLUMN_RESIZE_GRAB_WIDTH: f32 = 8.0;
+const ORIGINAL_COLUMN_FIT_PADDING: f32 = 16.0;
+const HEADER_FONT_SIZE: f32 = 12.5;
 const RULE_ROW_HEIGHT: f32 = 34.0;
 const RULE_ACTION_SIZE: f32 = 24.0;
 const RULE_ACTIONS_WIDTH: f32 = RULE_ACTION_SIZE;
@@ -49,6 +59,16 @@ struct PreviewCache {
     previews: Vec<String>,
     report: ValidationReport,
     dirty: bool,
+}
+
+struct FileTableContext<'a> {
+    files: &'a [FileEntry],
+    selected: &'a BTreeSet<FileId>,
+    order: &'a [usize],
+    previews: &'a [String],
+    palette: &'a Palette,
+    grid: Stroke,
+    original_separator: Stroke,
 }
 
 struct Notice {
@@ -260,6 +280,7 @@ pub(crate) struct RenameRxApp {
     selected: BTreeSet<u64>,
     selection_anchor: Option<usize>,
     preview: PreviewCache,
+    original_column_width: f32,
     status: String,
     requests: Requests,
     last_rename: Option<Vec<RenameOutcome>>,
@@ -307,6 +328,7 @@ impl RenameRxApp {
             selected: BTreeSet::new(),
             selection_anchor: None,
             preview: PreviewCache::new(),
+            original_column_width: ORIGINAL_COLUMN_DEFAULT_WIDTH,
             status: "Ready".to_owned(),
             requests: Requests::default(),
             last_rename: None,
@@ -1043,109 +1065,99 @@ impl RenameRxApp {
         // the I-beam cursor and text-selection mode stealing clicks from rows.
         ui.style_mut().interaction.selectable_labels = false;
 
+        let table_rect = ui.available_rect_before_wrap();
+        let spacing = ui.spacing().item_spacing.x;
+        let max_width = original_column_max_width(
+            table_rect.width() - ui.spacing().scroll.allocated_width(),
+            spacing,
+        );
+        let width = self
+            .original_column_width
+            .clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_width);
+        let resize_id = ui.make_persistent_id("original_column_resize");
+        let resize_hovered = ui
+            .ctx()
+            .read_response(resize_id)
+            .is_some_and(|response| response.hovered() || response.dragged());
+        let grid = Stroke::new(1.0, palette.grid);
+        let original_separator = if resize_hovered {
+            Stroke::new(1.0, palette.accent)
+        } else {
+            grid
+        };
+        let mut original_header_rect = Rect::NOTHING;
+
         {
-            let files = &self.files;
-            let selected = &self.selected;
-            let order = &self.preview.order;
-            let previews = &self.preview.previews;
+            let context = FileTableContext {
+                files: &self.files,
+                selected: &self.selected,
+                order: &self.preview.order,
+                previews: &self.preview.previews,
+                palette: &palette,
+                grid,
+                original_separator,
+            };
 
             TableBuilder::new(ui)
                 .striped(false)
                 .resizable(false)
                 .sense(Sense::click())
                 .cell_layout(Layout::left_to_right(Align::Center))
-                .column(Column::exact(42.0))
-                .column(Column::initial(280.0).at_least(150.0).clip(true))
-                .column(Column::exact(78.0))
-                .column(Column::remainder().at_least(160.0).clip(true))
-                .column(Column::exact(104.0))
-                .header(TABLE_HEADER_HEIGHT, |mut header| {
-                    header.col(|ui| {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            header_label(ui, "#", &palette);
-                        });
-                    });
-                    header.col(|ui| {
-                        header_label(ui, "Original File Name", &palette);
-                    });
-                    header.col(|ui| {
-                        header_label(ui, "Type", &palette);
-                    });
-                    header.col(|ui| {
-                        header_label(ui, "Preview File Name", &palette);
-                    });
-                    header.col(|ui| {
-                        header_label(ui, "Created", &palette);
-                    });
+                .column(Column::exact(INDEX_COLUMN_WIDTH))
+                .column(Column::exact(width))
+                .column(Column::exact(TYPE_COLUMN_WIDTH))
+                .column(Column::remainder().at_least(PREVIEW_MIN_WIDTH).clip(true))
+                .column(Column::exact(CREATED_COLUMN_WIDTH))
+                .header(TABLE_HEADER_HEIGHT, |header| {
+                    original_header_rect = file_table_header(header, &context);
                 })
                 .body(|body| {
-                    body.rows(ROW_HEIGHT, order.len(), |mut row| {
-                        let display_index = row.index();
-                        let Some(&file_index) = order.get(display_index) else {
-                            return;
-                        };
-                        let Some(file) = files.get(file_index) else {
-                            return;
-                        };
-
-                        let preview = previews
-                            .get(file_index)
-                            .map_or(file.original_name.as_str(), String::as_str);
-                        let is_selected = selected.contains(&file.id);
-
-                        row.set_selected(is_selected);
-
-                        row.col(|ui| {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(
-                                    RichText::new((display_index + 1).to_string())
-                                        .size(12.0)
-                                        .color(palette.secondary),
-                                );
-                            });
-                        });
-
-                        row.col(|ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&file.original_name).color(palette.text),
-                                )
-                                .truncate()
-                                .selectable(false),
-                            );
-                        });
-
-                        row.col(|ui| {
-                            paint_type_cell(ui, file.extension(), &palette);
-                        });
-
-                        row.col(|ui| {
-                            ui.add(
-                                egui::Label::new(RichText::new(preview).color(palette.secondary))
-                                    .truncate()
-                                    .selectable(false),
-                            );
-                        });
-
-                        row.col(|ui| {
-                            ui.label(
-                                RichText::new(format_date(file.display_time()))
-                                    .size(12.5)
-                                    .color(palette.secondary),
-                            );
-                        });
-
-                        let response = row.response();
-                        if response.clicked() {
-                            clicked = Some((file.id, display_index));
+                    body.rows(ROW_HEIGHT, context.order.len(), |row| {
+                        if let Some(click) = file_table_row(row, &context) {
+                            clicked = Some(click);
                         }
-                        response.on_hover_text(file.path.display().to_string());
                     });
                 });
         }
 
         if let Some((id, display_index)) = clicked {
             self.select_row(id, display_index, modifiers);
+        }
+
+        if original_header_rect.is_positive() {
+            let boundary_x = original_header_rect.right() - 0.5;
+            let handle_rect = Rect::from_x_y_ranges(
+                (boundary_x - COLUMN_RESIZE_GRAB_WIDTH * 0.5)
+                    ..=(boundary_x + COLUMN_RESIZE_GRAB_WIDTH * 0.5),
+                original_header_rect.y_range(),
+            );
+            self.resize_original_column(ui, resize_id, handle_rect, width, max_width, &palette);
+        }
+    }
+
+    fn resize_original_column(
+        &mut self,
+        ui: &mut Ui,
+        resize_id: egui::Id,
+        handle_rect: Rect,
+        width: f32,
+        max_width: f32,
+        palette: &Palette,
+    ) {
+        let response = ui.interact(handle_rect, resize_id, Sense::click_and_drag());
+
+        if response.dragged() {
+            self.original_column_width =
+                (width + response.drag_delta().x).clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_width);
+            ui.ctx().request_repaint();
+        } else if response.double_clicked() {
+            let fit = original_name_fit_width(ui, &self.files, palette);
+            self.original_column_width = fit.clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_width);
+            ui.ctx().request_repaint();
+        }
+
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(CursorIcon::ResizeColumn);
         }
     }
 
@@ -2645,10 +2657,140 @@ fn format_date(time: Option<SystemTime>) -> String {
     )
 }
 
+fn paint_column_separator(ui: &Ui, stroke: Stroke) {
+    let rect = ui.max_rect();
+    ui.painter()
+        .vline(rect.right() - 0.5, rect.y_range(), stroke);
+}
+
+fn original_column_max_width(table_width: f32, spacing: f32) -> f32 {
+    // Five columns leave four gaps.
+    (table_width - FILE_TABLE_FIXED_WIDTH - PREVIEW_MIN_WIDTH - spacing * 4.0)
+        .max(ORIGINAL_COLUMN_MIN_WIDTH)
+}
+
+fn original_name_fit_width(ui: &Ui, files: &[FileEntry], palette: &Palette) -> f32 {
+    let header_width = ui
+        .painter()
+        .layout_no_wrap("Original File Name".to_owned(), header_font(), palette.text)
+        .size()
+        .x;
+    let body_font = ui
+        .style()
+        .text_styles
+        .get(&TextStyle::Body)
+        .cloned()
+        .unwrap_or_default();
+    let names_width = files
+        .iter()
+        .map(|file| {
+            ui.painter()
+                .layout_no_wrap(file.original_name.clone(), body_font.clone(), palette.text)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+
+    header_width.max(names_width) + ORIGINAL_COLUMN_FIT_PADDING
+}
+
+fn file_table_header(mut header: TableRow<'_, '_>, context: &FileTableContext<'_>) -> Rect {
+    header.col(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            header_label(ui, "#", context.palette);
+        });
+        paint_column_separator(ui, context.grid);
+    });
+    let mut original_header_rect = Rect::NOTHING;
+    header.col(|ui| {
+        original_header_rect = ui.max_rect();
+        header_label(ui, "Original File Name", context.palette);
+        paint_column_separator(ui, context.original_separator);
+    });
+    header.col(|ui| {
+        header_label(ui, "Type", context.palette);
+        paint_column_separator(ui, context.grid);
+    });
+    header.col(|ui| {
+        header_label(ui, "Preview File Name", context.palette);
+        paint_column_separator(ui, context.grid);
+    });
+    header.col(|ui| {
+        header_label(ui, "Created", context.palette);
+    });
+    original_header_rect
+}
+
+fn file_table_row(
+    mut row: TableRow<'_, '_>,
+    context: &FileTableContext<'_>,
+) -> Option<(FileId, usize)> {
+    let display_index = row.index();
+    let &file_index = context.order.get(display_index)?;
+    let file = context.files.get(file_index)?;
+    let preview = context
+        .previews
+        .get(file_index)
+        .map_or(file.original_name.as_str(), String::as_str);
+
+    row.set_selected(context.selected.contains(&file.id));
+
+    row.col(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(
+                RichText::new((display_index + 1).to_string())
+                    .size(12.0)
+                    .color(context.palette.secondary),
+            );
+        });
+        paint_column_separator(ui, context.grid);
+    });
+
+    row.col(|ui| {
+        ui.add(
+            egui::Label::new(RichText::new(&file.original_name).color(context.palette.text))
+                .truncate()
+                .selectable(false),
+        );
+        paint_column_separator(ui, context.original_separator);
+    });
+
+    row.col(|ui| {
+        paint_type_cell(ui, file.extension(), context.palette);
+        paint_column_separator(ui, context.grid);
+    });
+
+    row.col(|ui| {
+        ui.add(
+            egui::Label::new(RichText::new(preview).color(context.palette.secondary))
+                .truncate()
+                .selectable(false),
+        );
+        paint_column_separator(ui, context.grid);
+    });
+
+    row.col(|ui| {
+        ui.label(
+            RichText::new(format_date(file.display_time()))
+                .size(12.5)
+                .color(context.palette.secondary),
+        );
+    });
+
+    let response = row.response();
+    let clicked = response.clicked().then_some((file.id, display_index));
+    response.on_hover_text(file.path.display().to_string());
+    clicked
+}
+
+fn header_font() -> FontId {
+    FontId::new(HEADER_FONT_SIZE, semibold())
+}
+
 fn header_label(ui: &mut Ui, text: &str, palette: &Palette) {
     ui.label(
         RichText::new(text)
-            .font(FontId::new(12.5, semibold()))
+            .font(header_font())
             .color(palette.secondary),
     );
 }
@@ -4164,6 +4306,25 @@ mod tests {
         assert!(
             hold.step_due(repeat_at + SPIN_HOLD_INTERVAL_SECS + 0.001),
             "the next repeat must fire after the interval"
+        );
+    }
+
+    #[test]
+    fn max_original_width_keeps_preview_minimum() {
+        let spacing = 8.0;
+        let table_width = 800.0;
+        let max = original_column_max_width(table_width, spacing);
+        let used = FILE_TABLE_FIXED_WIDTH + max + PREVIEW_MIN_WIDTH + spacing * 4.0;
+
+        assert!(
+            (used - table_width).abs() < 0.01,
+            "max width {max} uses {used} of {table_width}"
+        );
+
+        let narrow = original_column_max_width(300.0, spacing);
+        assert!(
+            (narrow - ORIGINAL_COLUMN_MIN_WIDTH).abs() < 0.01,
+            "narrow tables must fall back to the minimum width, got {narrow}"
         );
     }
 }
