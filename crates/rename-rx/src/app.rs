@@ -2669,21 +2669,21 @@ impl RenameRxApp {
                                 SPINBOX_WIDTH,
                             );
                             ui.add_space(6.0);
-                            let mut automatic = rule.padding.is_none();
-                            if ui.checkbox(&mut automatic, "Automatic padding").changed() {
-                                rule.padding = if automatic { None } else { Some(3) };
-                                changed = true;
-                            }
-                            if let Some(padding) = &mut rule.padding {
-                                ui.add_space(6.0);
-                                changed |= labeled_spinbox_u32(
-                                    ui,
-                                    "Width",
-                                    padding,
-                                    1..=12,
-                                    SPINBOX_WIDTH,
-                                );
-                            }
+                            changed |= ui
+                                .checkbox(&mut rule.auto_padding, "Automatic padding")
+                                .changed();
+                            ui.add_space(6.0);
+                            changed |= ui
+                                .add_enabled_ui(!rule.auto_padding, |ui| {
+                                    labeled_spinbox_u32(
+                                        ui,
+                                        "Width",
+                                        &mut rule.padding,
+                                        1..=12,
+                                        SPINBOX_WIDTH,
+                                    )
+                                })
+                                .inner;
 
                             ui.add_space(12.0);
                             ui.label(RichText::new("Prefix").size(12.5).color(palette.secondary));
@@ -2694,9 +2694,9 @@ impl RenameRxApp {
                             changed |= text_edit_fill(ui, &mut rule.suffix, "Suffix");
 
                             ui.add_space(6.0);
-                            let hint = if rule.padding.is_none() {
+                            let hint = if rule.auto_padding {
                                 "Automatic padding fits the widest number in the batch \
-                                 (10 files → 01 … 10). The default prefix is a space."
+                                 (10 files → 01 … 10). The width above is kept for manual mode."
                             } else {
                                 "Padding is the total width of the number (3 → 001). \
                                  The default prefix is a space."
@@ -3541,6 +3541,7 @@ fn serialize_row(
         step: _,
         offset,
         padding: _,
+        auto_padding: _,
         position,
         prefix,
         suffix,

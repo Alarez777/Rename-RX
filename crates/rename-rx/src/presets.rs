@@ -128,7 +128,8 @@ mod tests {
         move_rule(&mut rules).length = 2;
         move_rule(&mut rules).anchor = MoveAnchor::End;
         serialize(&mut rules).enabled = true;
-        serialize(&mut rules).padding = Some(4);
+        serialize(&mut rules).auto_padding = false;
+        serialize(&mut rules).padding = 4;
         serialize(&mut rules).position = SerializePosition::Before;
 
         // Duplicates are part of the persisted state.
@@ -219,11 +220,12 @@ mod tests {
             panic!("the Serialize rule keeps its kind");
         };
 
-        assert_eq!(serialize.padding, Some(5));
+        assert_eq!(serialize.padding, 5);
+        assert!(!serialize.auto_padding);
     }
 
     #[test]
-    fn presets_without_a_padding_use_the_automatic_width() {
+    fn presets_without_a_serialize_rule_use_the_automatic_width() {
         let store: PresetStore =
             serde_json::from_str(r#"{"presets":[{"name":"Old","rules":{}}]}"#).unwrap();
         let rules = &store.presets[0].rules;
@@ -236,7 +238,54 @@ mod tests {
             panic!("the Serialize rule keeps its kind");
         };
 
-        assert_eq!(serialize.padding, None);
+        assert_eq!(serialize.padding, 3);
+        assert!(serialize.auto_padding);
+    }
+
+    #[test]
+    fn current_presets_without_auto_padding_load_as_manual() {
+        let json = r#"{
+            "presets": [{
+                "name": "Old",
+                "rules": {
+                    "rules": [{"tool": "serialize", "config": {"padding": 2}}]
+                }
+            }]
+        }"#;
+        let store: PresetStore = serde_json::from_str(json).unwrap();
+        let rules = &store.presets[0].rules;
+        let Rule::Serialize(serialize) = rules
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == RuleKind::Serialize)
+            .expect("the preset keeps every rule kind")
+        else {
+            panic!("the Serialize rule keeps its kind");
+        };
+
+        assert_eq!(serialize.padding, 2);
+        assert!(!serialize.auto_padding);
+    }
+
+    #[test]
+    fn presets_keep_the_manual_width_while_automatic() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).auto_padding = true;
+        serialize(&mut rules).padding = 2;
+        let json = serde_json::to_string(&rules).unwrap();
+
+        let restored: RuleSet = serde_json::from_str(&json).unwrap();
+        let Rule::Serialize(serialize) = restored
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == RuleKind::Serialize)
+            .expect("the round trip keeps every kind")
+        else {
+            panic!("the Serialize rule keeps its kind");
+        };
+
+        assert!(serialize.auto_padding);
+        assert_eq!(serialize.padding, 2);
     }
 
     #[test]

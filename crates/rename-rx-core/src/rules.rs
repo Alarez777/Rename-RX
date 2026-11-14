@@ -513,11 +513,17 @@ pub struct SerializeRule {
     pub step: u32,
     /// Constant added to every number.
     pub offset: u32,
-    /// Total width of the number, zero-padded.
+    /// Manual total width of the number, zero-padded.
     ///
-    /// `Some` fixes the width; `None` pads to the widest number in the batch.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub padding: Option<u32>,
+    /// This keeps the last width the user chose, even while
+    /// [`Self::auto_padding`] is on.
+    pub padding: u32,
+    /// Pad to the widest number in the batch instead of [`Self::padding`].
+    ///
+    /// Presets saved before this field existed load with it off, which keeps
+    /// their manual padding unchanged.
+    #[serde(default)]
+    pub auto_padding: bool,
     /// Where the number is placed.
     pub position: SerializePosition,
     /// Text before the number.
@@ -526,6 +532,9 @@ pub struct SerializeRule {
     pub suffix: String,
 }
 
+/// Manual width used until the user picks one.
+const DEFAULT_PADDING: u32 = 3;
+
 impl Default for SerializeRule {
     fn default() -> Self {
         Self {
@@ -533,7 +542,8 @@ impl Default for SerializeRule {
             start: 1,
             step: 1,
             offset: 0,
-            padding: None,
+            padding: DEFAULT_PADDING,
+            auto_padding: true,
             position: SerializePosition::Before,
             // A trailing space keeps the default `001 name` layout; the space
             // travels with the number rather than being a separate separator.
@@ -544,16 +554,18 @@ impl Default for SerializeRule {
 }
 
 impl SerializeRule {
-    /// Width used for a batch: the manual value, or the digits of the largest
+    /// Width used for a batch: [`Self::padding`] or the digits of the largest
     /// number this rule will generate for that many files.
     fn effective_padding(&self, batch_len: usize) -> u32 {
-        self.padding.unwrap_or_else(|| {
-            let steps = u64::try_from(batch_len.saturating_sub(1)).unwrap_or(u64::MAX);
-            let last = u64::from(self.start)
-                .saturating_add(steps.saturating_mul(u64::from(self.step)))
-                .saturating_add(u64::from(self.offset));
-            decimal_width(last)
-        })
+        if !self.auto_padding {
+            return self.padding;
+        }
+
+        let steps = u64::try_from(batch_len.saturating_sub(1)).unwrap_or(u64::MAX);
+        let last = u64::from(self.start)
+            .saturating_add(steps.saturating_mul(u64::from(self.step)))
+            .saturating_add(u64::from(self.offset));
+        decimal_width(last)
     }
 }
 
@@ -1420,7 +1432,8 @@ mod tests {
         assert_eq!(rule.start, 1);
         assert_eq!(rule.step, 1);
         assert_eq!(rule.offset, 0);
-        assert_eq!(rule.padding, None);
+        assert_eq!(rule.padding, 3);
+        assert!(rule.auto_padding);
         assert_eq!(rule.position, SerializePosition::Before);
         assert_eq!(rule.prefix, "");
         assert_eq!(rule.suffix, " ");
@@ -1430,7 +1443,8 @@ mod tests {
     fn serialize_supports_position_padding_and_step() {
         let mut rules = RuleSet::default();
         serialize(&mut rules).enabled = true;
-        serialize(&mut rules).padding = Some(4);
+        serialize(&mut rules).auto_padding = false;
+        serialize(&mut rules).padding = 4;
         serialize(&mut rules).start = 10;
         serialize(&mut rules).step = 5;
         serialize(&mut rules).position = SerializePosition::Before;
@@ -1474,17 +1488,40 @@ mod tests {
         serialize(&mut rules).step = 1;
         serialize(&mut rules).offset = 990;
         assert_eq!(apply(&rules, "a.txt", 9, 10), "1000-a.txt");
+
+        serialize(&mut rules).offset = 0;
+        serialize(&mut rules).start = 0;
+        assert_eq!(
+            apply(&rules, "a.txt", 9, 10),
+            "9-a.txt",
+            "zero-based numbers use one digit for a ten-file batch"
+        );
     }
 
     #[test]
     fn serialize_manual_padding_overrides_the_batch_size() {
         let mut rules = RuleSet::default();
         serialize(&mut rules).enabled = true;
-        serialize(&mut rules).padding = Some(4);
+        serialize(&mut rules).auto_padding = false;
+        serialize(&mut rules).padding = 4;
         serialize(&mut rules).prefix.clear();
         serialize(&mut rules).suffix = "-".to_owned();
 
         assert_eq!(apply(&rules, "a.txt", 0, 10), "0001-a.txt");
+    }
+
+    #[test]
+    fn serialize_keeps_the_manual_width_for_automatic_mode() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).padding = 2;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 0, 100), "001-a.txt");
+
+        serialize(&mut rules).auto_padding = false;
+        assert_eq!(apply(&rules, "a.txt", 0, 100), "01-a.txt");
     }
 
     #[test]

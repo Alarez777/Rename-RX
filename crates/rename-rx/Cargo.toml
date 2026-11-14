@@ -6,6 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Native batch file renamer for Linux"
+publish = false
 
 [[bin]]
 name = "rename-rx"
