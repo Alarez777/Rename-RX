@@ -7,6 +7,9 @@
 # RENAME_RX_SKIP_BUILD=1 / RENAME_RX_BINARY=/path/to/rename-rx to package a
 # binary built elsewhere (for example in an older container for wider glibc
 # compatibility).
+#
+# The AppImage embeds the pinned uruntime release. Override the tag with
+# RENAME_RX_URUNTIME_VERSION.
 
 set -euo pipefail
 
@@ -31,6 +34,9 @@ case "$(uname -m)" in
 esac
 APPIMAGETOOL="$TOOLS/appimagetool-${TOOL_ARCH}.AppImage"
 APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${TOOL_ARCH}.AppImage}"
+URUNTIME_VERSION="${RENAME_RX_URUNTIME_VERSION:-v0.8.3}"
+URUNTIME="$TOOLS/uruntime-appimage-squashfs-lite-${TARGET_ARCH}-${URUNTIME_VERSION}"
+URUNTIME_URL="${RENAME_RX_URUNTIME_URL:-https://github.com/VHSgunzo/uruntime/releases/download/${URUNTIME_VERSION}/uruntime-appimage-squashfs-lite-${TARGET_ARCH}}"
 
 case "$TARGET_ARCH" in
     x86_64|aarch64) ;;
@@ -73,10 +79,25 @@ if [[ ! -x "$APPIMAGETOOL" ]]; then
     chmod 0755 "$APPIMAGETOOL"
 fi
 
+if [[ ! -x "$URUNTIME" ]]; then
+    echo "Downloading uruntime ${URUNTIME_VERSION}..."
+    curl --fail --location --silent --show-error "$URUNTIME_URL" -o "$URUNTIME"
+    chmod 0755 "$URUNTIME"
+fi
+
 rm -f "$OUTPUT" "$OUTPUT.zsync"
 ARCH="$TARGET_ARCH" "$APPIMAGETOOL" --appimage-extract-and-run \
+    --runtime-file "$URUNTIME" \
     -u "$UPDATE_INFORMATION" "$APPDIR" "$OUTPUT"
 chmod 0755 "$OUTPUT"
+
+if [[ "$TARGET_ARCH" == "$TOOL_ARCH" ]]; then
+    EMBEDDED_RUNTIME="$("$OUTPUT" --appimage-version 2>/dev/null || true)"
+    if [[ "$EMBEDDED_RUNTIME" != "$URUNTIME_VERSION" ]]; then
+        echo "error: embedded runtime is '${EMBEDDED_RUNTIME:-unknown}', expected $URUNTIME_VERSION" >&2
+        exit 1
+    fi
+fi
 
 # appimagetool/zsyncmake writes the zsync file in the current directory,
 # while the AppImage goes to $DIST. Keep both release assets together.
