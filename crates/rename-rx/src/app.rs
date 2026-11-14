@@ -2669,13 +2669,33 @@ impl RenameRxApp {
                                 SPINBOX_WIDTH,
                             );
                             ui.add_space(6.0);
-                            changed |= labeled_spinbox_u32(
-                                ui,
-                                "Padding",
-                                &mut rule.padding,
-                                1..=12,
-                                SPINBOX_WIDTH,
-                            );
+                            changed |= ui
+                                .checkbox(&mut rule.auto_padding, "Automatic padding")
+                                .changed();
+                            ui.add_space(6.0);
+                            changed |= ui
+                                .add_enabled_ui(!rule.auto_padding, |ui| {
+                                    labeled_spinbox_u32(
+                                        ui,
+                                        "Width",
+                                        &mut rule.padding,
+                                        1..=12,
+                                        SPINBOX_WIDTH,
+                                    )
+                                })
+                                .inner;
+                            ui.add_space(6.0);
+                            changed |= ui
+                                .add_enabled_ui(rule.auto_padding, |ui| {
+                                    labeled_spinbox_u32(
+                                        ui,
+                                        "Min width",
+                                        &mut rule.min_padding,
+                                        1..=12,
+                                        SPINBOX_WIDTH,
+                                    )
+                                })
+                                .inner;
 
                             ui.add_space(12.0);
                             ui.label(RichText::new("Prefix").size(12.5).color(palette.secondary));
@@ -2686,14 +2706,15 @@ impl RenameRxApp {
                             changed |= text_edit_fill(ui, &mut rule.suffix, "Suffix");
 
                             ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(
-                                    "Padding is the total width of the number (3 → 001). \
-                                     The default prefix is a space.",
-                                )
-                                .size(12.0)
-                                .color(palette.secondary),
-                            );
+                            let hint = if rule.auto_padding {
+                                "Automatic padding fits the widest number in the batch and \
+                                 never goes below the minimum (5 files with 2 → 01 … 05). \
+                                 The width above is kept for manual mode."
+                            } else {
+                                "Padding is the total width of the number (2 → 01). \
+                                 The default prefix is a space."
+                            };
+                            ui.label(RichText::new(hint).size(12.0).color(palette.secondary));
                         }
                         _ => {}
                     }
@@ -3527,19 +3548,16 @@ fn serialize_row(
     meta: RuleRowMeta,
     rule: &mut SerializeRule,
 ) -> bool {
-    let SerializeRule {
-        enabled,
-        start,
-        step: _,
-        offset,
-        padding: _,
-        position,
-        prefix,
-        suffix,
-    } = rule;
+    // `SerializeRule` is non-exhaustive, so borrow the fields the row edits
+    // separately from the enable checkbox.
+    let start = &mut rule.start;
+    let offset = &mut rule.offset;
+    let position = &mut rule.position;
+    let prefix = &mut rule.prefix;
+    let suffix = &mut rule.suffix;
     RuleRow::new(
         "Serialize",
-        enabled,
+        &mut rule.enabled,
         Some(RuleSettings::Serialize),
         context,
         meta,

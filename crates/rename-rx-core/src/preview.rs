@@ -77,14 +77,8 @@ pub struct PreviewResult {
 pub fn build_preview(files: &[FileEntry], rules: &RuleSet) -> PreviewResult {
     let order = sorted_indices(files, rules.sort());
     let compiled = CompiledRules::new(rules);
-    let mut previews = vec![String::new(); files.len()];
-    let mut parts = vec![NameParts::default(); files.len()];
-
-    for (position, &index) in order.iter().enumerate() {
-        let result = compiled.apply_parts(&files[index], position);
-        previews[index] = result.file_name();
-        parts[index] = result;
-    }
+    let parts = compiled.apply_batch(files, &order);
+    let previews: Vec<String> = parts.iter().map(NameParts::file_name).collect();
 
     let mut report = validate(files, &order, &previews, &parts, rules, compiled.errors());
     // Errors first, then warnings, then informational findings.
@@ -535,9 +529,9 @@ mod tests {
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.order, vec![1, 2, 0]);
-        assert_eq!(result.previews[1], "001 A.txt");
-        assert_eq!(result.previews[2], "002 B.txt");
-        assert_eq!(result.previews[0], "003 C.txt");
+        assert_eq!(result.previews[1], "01 A.txt");
+        assert_eq!(result.previews[2], "02 B.txt");
+        assert_eq!(result.previews[0], "03 C.txt");
     }
 
     #[test]
@@ -551,8 +545,23 @@ mod tests {
 
         let result = build_preview(&files, &rules);
         assert_eq!(result.order, vec![1, 0]);
-        assert_eq!(result.previews[1], "001 B.txt");
-        assert_eq!(result.previews[0], "002 A.txt");
+        assert_eq!(result.previews[1], "01 B.txt");
+        assert_eq!(result.previews[0], "02 A.txt");
+    }
+
+    #[test]
+    fn serialize_padding_matches_the_batch_size() {
+        let files: Vec<FileEntry> = (0..10)
+            .map(|index| fake_entry(index, &format!("file-{index}.txt")))
+            .collect();
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        let result = build_preview(&files, &rules);
+        assert_eq!(result.previews[0], "01-file-0.txt");
+        assert_eq!(result.previews[9], "10-file-9.txt");
     }
 
     #[test]

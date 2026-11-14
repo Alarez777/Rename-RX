@@ -504,6 +504,7 @@ pub enum MoveAnchor {
 /// Adds a sequential number to the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SerializeRule {
     /// Whether the rule runs.
     pub enabled: bool,
@@ -513,8 +514,21 @@ pub struct SerializeRule {
     pub step: u32,
     /// Constant added to every number.
     pub offset: u32,
-    /// Total width of the number, zero-padded.
+    /// Manual total width of the number, zero-padded.
+    ///
+    /// This keeps the last width the user chose, even while
+    /// [`Self::auto_padding`] is on.
     pub padding: u32,
+    /// Pad to the widest number in the batch instead of [`Self::padding`].
+    ///
+    /// Presets saved before this field existed load with it off, which keeps
+    /// their manual padding unchanged.
+    #[serde(default)]
+    pub auto_padding: bool,
+    /// Smallest width used while [`Self::auto_padding`] is on.
+    ///
+    /// Lets a short series keep a two-digit convention such as `s01e08`.
+    pub min_padding: u32,
     /// Where the number is placed.
     pub position: SerializePosition,
     /// Text before the number.
@@ -523,6 +537,16 @@ pub struct SerializeRule {
     pub suffix: String,
 }
 
+/// Manual width used until the user picks one.
+const DEFAULT_PADDING: u32 = 2;
+
+/// Automatic width used until the user picks a different minimum.
+const DEFAULT_MIN_PADDING: u32 = 2;
+
+/// Upper bound shared with the settings UI; keeps a corrupt preset from
+/// allocating enormous names.
+const MAX_PADDING: u32 = 12;
+
 impl Default for SerializeRule {
     fn default() -> Self {
         Self {
@@ -530,7 +554,9 @@ impl Default for SerializeRule {
             start: 1,
             step: 1,
             offset: 0,
-            padding: 3,
+            padding: DEFAULT_PADDING,
+            auto_padding: true,
+            min_padding: DEFAULT_MIN_PADDING,
             position: SerializePosition::Before,
             // A trailing space keeps the default `001 name` layout; the space
             // travels with the number rather than being a separate separator.
@@ -538,6 +564,31 @@ impl Default for SerializeRule {
             suffix: " ".to_owned(),
         }
     }
+}
+
+impl SerializeRule {
+    /// Width used for a batch: [`Self::padding`] or the digits of the largest
+    /// number this rule will generate for that many files, never fewer than
+    /// [`Self::min_padding`]. The result stays within the width the settings
+    /// UI allows, so a corrupt preset cannot allocate enormous names.
+    fn effective_padding(&self, batch_len: usize) -> u32 {
+        let width = if self.auto_padding {
+            let steps = u64::try_from(batch_len.saturating_sub(1)).unwrap_or(u64::MAX);
+            let last = u64::from(self.start)
+                .saturating_add(steps.saturating_mul(u64::from(self.step)))
+                .saturating_add(u64::from(self.offset));
+            decimal_width(last).max(self.min_padding)
+        } else {
+            self.padding
+        };
+
+        width.clamp(1, MAX_PADDING)
+    }
+}
+
+/// Number of decimal digits in `number`, counting `0` as one digit.
+fn decimal_width(number: u64) -> u32 {
+    number.checked_ilog10().map_or(1, |exponent| exponent + 1)
 }
 
 /// Where the serial number is placed relative to the base name.
@@ -707,14 +758,31 @@ impl<'rules> CompiledRules<'rules> {
         &self.errors
     }
 
-    /// Apply the pipeline to one file. `index` is the position of the file in
-    /// the current (sorted) order and drives serialization.
-    pub fn apply(&self, file: &FileEntry, index: usize) -> String {
-        self.apply_parts(file, index).file_name()
+    /// Apply the pipeline to every file in `order`, returning the parts for
+    /// each file indexed like `files`.
+    ///
+    /// `order` must contain every index in `files`. The batch length comes
+    /// from `order`, so automatic padding always sees the real number of
+    /// files instead of a value supplied by the caller.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds panic when `order` does not cover every file.
+    pub fn apply_batch(&self, files: &[FileEntry], order: &[usize]) -> Vec<NameParts> {
+        debug_assert_eq!(order.len(), files.len(), "order must cover every file");
+        let mut parts = vec![NameParts::default(); files.len()];
+
+        for (position, &index) in order.iter().enumerate() {
+            if let Some(file) = files.get(index) {
+                parts[index] = self.apply_parts(file, position, order.len());
+            }
+        }
+
+        parts
     }
 
     /// Apply the pipeline and return the stem and extension separately.
-    pub fn apply_parts(&self, file: &FileEntry, index: usize) -> NameParts {
+    fn apply_parts(&self, file: &FileEntry, index: usize, batch_len: usize) -> NameParts {
         let (stem, extension) = file.name_parts();
         let mut stem = stem.to_owned();
         let mut extension = extension.to_owned();
@@ -784,7 +852,7 @@ impl<'rules> CompiledRules<'rules> {
                         stem = serialize(
                             &stem,
                             number,
-                            rule.padding,
+                            rule.effective_padding(batch_len),
                             rule.position,
                             &rule.prefix,
                             &rule.suffix,
@@ -1004,8 +1072,10 @@ mod tests {
         }
     }
 
-    fn apply(rules: &RuleSet, name: &str, index: usize) -> String {
-        CompiledRules::new(rules).apply(&entry(name), index)
+    fn apply(rules: &RuleSet, name: &str, index: usize, batch_len: usize) -> String {
+        CompiledRules::new(rules)
+            .apply_parts(&entry(name), index, batch_len)
+            .file_name()
     }
 
     fn rule_mut<'a, T>(
@@ -1104,12 +1174,12 @@ mod tests {
         serialize(&mut rules).enabled = true;
 
         assert_eq!(
-            apply(&rules, "HEC-0941.jpg", 0),
-            "001 París Winter 2017.jpg"
+            apply(&rules, "HEC-0941.jpg", 0, 2),
+            "01 París Winter 2017.jpg"
         );
         assert_eq!(
-            apply(&rules, "HEC-0942.jpg", 1),
-            "002 París Winter 2017.jpg"
+            apply(&rules, "HEC-0942.jpg", 1, 2),
+            "02 París Winter 2017.jpg"
         );
     }
 
@@ -1124,7 +1194,7 @@ mod tests {
         suffix(&mut rules).enabled = true;
         suffix(&mut rules).text = "!".to_owned();
 
-        assert_eq!(apply(&rules, "a.jpg", 0), "X 001 Pic!.jpg");
+        assert_eq!(apply(&rules, "a.jpg", 0, 1), "X 01 Pic!.jpg");
     }
 
     #[test]
@@ -1135,10 +1205,10 @@ mod tests {
         replace(&mut rules).replace = "dog".to_owned();
         replace(&mut rules).case_sensitive = false;
 
-        assert_eq!(apply(&rules, "Cat catalog.txt", 0), "dog dogalog.txt");
+        assert_eq!(apply(&rules, "Cat catalog.txt", 0, 1), "dog dogalog.txt");
 
         replace(&mut rules).whole_word = true;
-        assert_eq!(apply(&rules, "Cat catalog.txt", 0), "dog catalog.txt");
+        assert_eq!(apply(&rules, "Cat catalog.txt", 0, 1), "dog catalog.txt");
     }
 
     #[test]
@@ -1148,7 +1218,7 @@ mod tests {
         regex(&mut rules).pattern = r"(\d+)".to_owned();
         regex(&mut rules).replacement = "[$1]".to_owned();
 
-        assert_eq!(apply(&rules, "IMG 1234.jpg", 0), "IMG [1234].jpg");
+        assert_eq!(apply(&rules, "IMG 1234.jpg", 0, 1), "IMG [1234].jpg");
     }
 
     #[test]
@@ -1237,7 +1307,7 @@ mod tests {
         remove(&mut rules).origin = CharacterOrigin::Before;
         remove(&mut rules).position = 0;
 
-        assert_eq!(apply(&rules, "original.txt", 0), "cd.txt");
+        assert_eq!(apply(&rules, "original.txt", 0, 1), "cd.txt");
     }
 
     #[test]
@@ -1346,7 +1416,7 @@ mod tests {
         move_rule(&mut rules).destination = CharacterOrigin::After;
         move_rule(&mut rules).offset = 0;
 
-        assert_eq!(apply(&rules, "original.txt", 0), "cdb.txt");
+        assert_eq!(apply(&rules, "original.txt", 0, 1), "cdb.txt");
     }
 
     #[test]
@@ -1355,7 +1425,7 @@ mod tests {
         assert_eq!(remove(&mut rules).count, 1);
 
         remove(&mut rules).enabled = true;
-        assert_eq!(apply(&rules, "abcdef.txt", 0), "bcdef.txt");
+        assert_eq!(apply(&rules, "abcdef.txt", 0, 1), "bcdef.txt");
     }
 
     #[test]
@@ -1365,11 +1435,11 @@ mod tests {
         remove(&mut rules).count = 2;
         remove(&mut rules).position = 1;
 
-        assert_eq!(apply(&rules, "abcdef.txt", 0), "adef.txt");
+        assert_eq!(apply(&rules, "abcdef.txt", 0, 1), "adef.txt");
 
         remove(&mut rules).origin = CharacterOrigin::After;
         remove(&mut rules).position = 0;
-        assert_eq!(apply(&rules, "abcdef.txt", 0), "abcd.txt");
+        assert_eq!(apply(&rules, "abcdef.txt", 0, 1), "abcd.txt");
     }
 
     #[test]
@@ -1377,16 +1447,16 @@ mod tests {
         let mut rules = RuleSet::default();
         extension(&mut rules).enabled = true;
         extension(&mut rules).value = ".PNG".to_owned();
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo.PNG");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 1), "photo.PNG");
 
         extension(&mut rules).value.clear();
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 1), "photo");
 
         extension(&mut rules).enabled = false;
         case(&mut rules).enabled = true;
         case(&mut rules).mode = CaseMode::Title;
         assert_eq!(
-            apply(&rules, "HEC-0941 vacation.jpg", 0),
+            apply(&rules, "HEC-0941 vacation.jpg", 0, 1),
             "Hec-0941 Vacation.jpg"
         );
     }
@@ -1397,7 +1467,9 @@ mod tests {
         assert_eq!(rule.start, 1);
         assert_eq!(rule.step, 1);
         assert_eq!(rule.offset, 0);
-        assert_eq!(rule.padding, 3);
+        assert_eq!(rule.padding, 2);
+        assert!(rule.auto_padding);
+        assert_eq!(rule.min_padding, 2);
         assert_eq!(rule.position, SerializePosition::Before);
         assert_eq!(rule.prefix, "");
         assert_eq!(rule.suffix, " ");
@@ -1407,6 +1479,7 @@ mod tests {
     fn serialize_supports_position_padding_and_step() {
         let mut rules = RuleSet::default();
         serialize(&mut rules).enabled = true;
+        serialize(&mut rules).auto_padding = false;
         serialize(&mut rules).padding = 4;
         serialize(&mut rules).start = 10;
         serialize(&mut rules).step = 5;
@@ -1414,8 +1487,117 @@ mod tests {
         serialize(&mut rules).prefix.clear();
         serialize(&mut rules).suffix = "-".to_owned();
 
-        assert_eq!(apply(&rules, "a.txt", 0), "0010-a.txt");
-        assert_eq!(apply(&rules, "a.txt", 2), "0020-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 0, 1), "0010-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 2, 1), "0020-a.txt");
+    }
+
+    #[test]
+    fn serialize_padding_follows_the_batch_size() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 8, 9), "09-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 0, 10), "01-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "10-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 0, 100), "001-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 99, 100), "100-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 999, 1000), "1000-a.txt");
+    }
+
+    #[test]
+    fn serialize_auto_padding_respects_the_minimum_width() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 0, 5), "01-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 4, 5), "05-a.txt");
+
+        serialize(&mut rules).min_padding = 4;
+        assert_eq!(apply(&rules, "a.txt", 0, 5), "0001-a.txt");
+
+        serialize(&mut rules).auto_padding = false;
+        serialize(&mut rules).padding = 1;
+        assert_eq!(
+            apply(&rules, "a.txt", 0, 5),
+            "1-a.txt",
+            "manual padding ignores the automatic minimum"
+        );
+    }
+
+    #[test]
+    fn serialize_padding_is_capped_for_corrupt_presets() {
+        let mut rule = SerializeRule {
+            auto_padding: false,
+            padding: 1_000,
+            ..SerializeRule::default()
+        };
+
+        assert_eq!(rule.effective_padding(5), MAX_PADDING);
+
+        rule.auto_padding = true;
+        rule.min_padding = 1_000;
+        assert_eq!(rule.effective_padding(5), MAX_PADDING);
+
+        rule.min_padding = 0;
+        assert_eq!(rule.effective_padding(5), 1);
+    }
+
+    #[test]
+    fn serialize_auto_padding_accounts_for_start_step_and_offset() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+        serialize(&mut rules).start = 95;
+
+        assert_eq!(apply(&rules, "a.txt", 0, 10), "095-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "104-a.txt");
+
+        serialize(&mut rules).start = 1;
+        serialize(&mut rules).step = 100;
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "901-a.txt");
+
+        serialize(&mut rules).step = 1;
+        serialize(&mut rules).offset = 990;
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "1000-a.txt");
+
+        serialize(&mut rules).offset = 0;
+        serialize(&mut rules).start = 0;
+        assert_eq!(
+            apply(&rules, "a.txt", 9, 10),
+            "09-a.txt",
+            "zero-based numbers keep the two-digit minimum"
+        );
+    }
+
+    #[test]
+    fn serialize_manual_padding_overrides_the_batch_size() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).auto_padding = false;
+        serialize(&mut rules).padding = 4;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 0, 10), "0001-a.txt");
+    }
+
+    #[test]
+    fn serialize_keeps_the_manual_width_for_automatic_mode() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).padding = 2;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 0, 100), "001-a.txt");
+
+        serialize(&mut rules).auto_padding = false;
+        assert_eq!(apply(&rules, "a.txt", 0, 100), "01-a.txt");
     }
 
     #[test]
@@ -1425,8 +1607,8 @@ mod tests {
         serialize(&mut rules).start = 1;
         serialize(&mut rules).offset = 2;
 
-        assert_eq!(apply(&rules, "photo.jpg", 0), "003 photo.jpg");
-        assert_eq!(apply(&rules, "photo.jpg", 1), "004 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 10), "03 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 1, 10), "04 photo.jpg");
     }
 
     #[test]
@@ -1437,12 +1619,12 @@ mod tests {
         serialize(&mut rules).prefix = " [".to_owned();
         serialize(&mut rules).suffix = "]".to_owned();
 
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo [001].jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 10), "photo [01].jpg");
 
         serialize(&mut rules).position = SerializePosition::Before;
         serialize(&mut rules).prefix.clear();
         serialize(&mut rules).suffix = " ".to_owned();
-        assert_eq!(apply(&rules, "photo.jpg", 0), "001 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 10), "01 photo.jpg");
     }
 
     #[test]
@@ -1453,7 +1635,10 @@ mod tests {
 
         let compiled = CompiledRules::new(&rules);
         assert_eq!(compiled.errors.len(), 1);
-        assert_eq!(compiled.apply(&entry("a.txt"), 0), "a.txt");
+        assert_eq!(
+            compiled.apply_parts(&entry("a.txt"), 0, 1).file_name(),
+            "a.txt"
+        );
     }
 
     #[test]
@@ -1504,14 +1689,14 @@ mod tests {
 
         rules.insert(index, Rule::Replace(a_to_b.clone()));
         rules.insert(index + 1, Rule::Replace(b_to_c.clone()));
-        assert_eq!(apply(&rules, "x.txt", 0), "cc.txt");
+        assert_eq!(apply(&rules, "x.txt", 0, 1), "cc.txt");
 
         let mut reversed = RuleSet::default();
         new_name(&mut reversed).enabled = true;
         new_name(&mut reversed).value = "aa".to_owned();
         reversed.insert(index, Rule::Replace(b_to_c));
         reversed.insert(index + 1, Rule::Replace(a_to_b));
-        assert_eq!(apply(&reversed, "x.txt", 0), "bb.txt");
+        assert_eq!(apply(&reversed, "x.txt", 0, 1), "bb.txt");
     }
 
     #[test]

@@ -65,7 +65,8 @@ Rules are applied from top to bottom, with per-rule options where needed:
 - Keep (keep a range of characters)
 - Remove (remove a range of characters)
 - Move (move a range to another position)
-- Serialize (start, step, offset, padding, prefix/suffix, before/after)
+- Serialize (start, step, offset, automatic or fixed padding, prefix/suffix,
+  before/after)
 - Prefix
 - Suffix
 - Extension
@@ -76,6 +77,12 @@ Rules can be enabled or disabled with their checkbox or by double-clicking the
 rule name. Rules that can repeat show a `+` button on the first instance; each
 duplicate is inserted below and shows a `−` to remove it. The order shown in the
 panel is the execution order.
+
+Serialize pads automatically by default: the width follows the largest number
+in the batch, with a minimum of two digits (`5 files → 01 … 05`), so a short
+series keeps a convention like `s01e08`. The minimum is the **Min width** field
+in the rule settings; uncheck **Automatic padding** there to fix a width
+instead, and the last width is kept while automatic is on.
 
 The live preview uses the same pipeline as the actual rename.
 
@@ -95,7 +102,8 @@ The **Presets** view saves the complete rule configuration under a name:
 - Select a preset and click **Load**, or double-click it.
 - **Delete** asks for confirmation.
 - Presets are stored in `~/.config/rename-rx/presets.json` and stay compatible
-  when new rules are added.
+  when new rules are added. A preset saved with automatic padding opens with
+  its last manual width in versions that predate the automatic mode.
 
 ### Desktop and file managers
 
