@@ -2711,7 +2711,7 @@ impl RenameRxApp {
                                  never goes below the minimum (5 files with 2 → 01 … 05). \
                                  The width above is kept for manual mode."
                             } else {
-                                "Padding is the total width of the number (3 → 001). \
+                                "Padding is the total width of the number (2 → 01). \
                                  The default prefix is a space."
                             };
                             ui.label(RichText::new(hint).size(12.0).color(palette.secondary));

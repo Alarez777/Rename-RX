@@ -240,7 +240,7 @@ mod tests {
             panic!("the Serialize rule keeps its kind");
         };
 
-        assert_eq!(serialize.padding, 3);
+        assert_eq!(serialize.padding, 2);
         assert!(serialize.auto_padding);
         assert_eq!(serialize.min_padding, 2);
     }

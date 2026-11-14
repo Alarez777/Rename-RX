@@ -538,10 +538,14 @@ pub struct SerializeRule {
 }
 
 /// Manual width used until the user picks one.
-const DEFAULT_PADDING: u32 = 3;
+const DEFAULT_PADDING: u32 = 2;
 
 /// Automatic width used until the user picks a different minimum.
 const DEFAULT_MIN_PADDING: u32 = 2;
+
+/// Upper bound shared with the settings UI; keeps a corrupt preset from
+/// allocating enormous names.
+const MAX_PADDING: u32 = 12;
 
 impl Default for SerializeRule {
     fn default() -> Self {
@@ -565,17 +569,20 @@ impl Default for SerializeRule {
 impl SerializeRule {
     /// Width used for a batch: [`Self::padding`] or the digits of the largest
     /// number this rule will generate for that many files, never fewer than
-    /// [`Self::min_padding`].
+    /// [`Self::min_padding`]. The result stays within the width the settings
+    /// UI allows, so a corrupt preset cannot allocate enormous names.
     fn effective_padding(&self, batch_len: usize) -> u32 {
-        if !self.auto_padding {
-            return self.padding;
-        }
+        let width = if self.auto_padding {
+            let steps = u64::try_from(batch_len.saturating_sub(1)).unwrap_or(u64::MAX);
+            let last = u64::from(self.start)
+                .saturating_add(steps.saturating_mul(u64::from(self.step)))
+                .saturating_add(u64::from(self.offset));
+            decimal_width(last).max(self.min_padding)
+        } else {
+            self.padding
+        };
 
-        let steps = u64::try_from(batch_len.saturating_sub(1)).unwrap_or(u64::MAX);
-        let last = u64::from(self.start)
-            .saturating_add(steps.saturating_mul(u64::from(self.step)))
-            .saturating_add(u64::from(self.offset));
-        decimal_width(last).max(self.min_padding)
+        width.clamp(1, MAX_PADDING)
     }
 }
 
@@ -754,9 +761,15 @@ impl<'rules> CompiledRules<'rules> {
     /// Apply the pipeline to every file in `order`, returning the parts for
     /// each file indexed like `files`.
     ///
-    /// The batch length comes from `order`, so automatic padding always sees
-    /// the real number of files instead of a value supplied by the caller.
+    /// `order` must contain every index in `files`. The batch length comes
+    /// from `order`, so automatic padding always sees the real number of
+    /// files instead of a value supplied by the caller.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds panic when `order` does not cover every file.
     pub fn apply_batch(&self, files: &[FileEntry], order: &[usize]) -> Vec<NameParts> {
+        debug_assert_eq!(order.len(), files.len(), "order must cover every file");
         let mut parts = vec![NameParts::default(); files.len()];
 
         for (position, &index) in order.iter().enumerate() {
@@ -1454,7 +1467,7 @@ mod tests {
         assert_eq!(rule.start, 1);
         assert_eq!(rule.step, 1);
         assert_eq!(rule.offset, 0);
-        assert_eq!(rule.padding, 3);
+        assert_eq!(rule.padding, 2);
         assert!(rule.auto_padding);
         assert_eq!(rule.min_padding, 2);
         assert_eq!(rule.position, SerializePosition::Before);
@@ -1513,6 +1526,24 @@ mod tests {
             "1-a.txt",
             "manual padding ignores the automatic minimum"
         );
+    }
+
+    #[test]
+    fn serialize_padding_is_capped_for_corrupt_presets() {
+        let mut rule = SerializeRule {
+            auto_padding: false,
+            padding: 1_000,
+            ..SerializeRule::default()
+        };
+
+        assert_eq!(rule.effective_padding(5), MAX_PADDING);
+
+        rule.auto_padding = true;
+        rule.min_padding = 1_000;
+        assert_eq!(rule.effective_padding(5), MAX_PADDING);
+
+        rule.min_padding = 0;
+        assert_eq!(rule.effective_padding(5), 1);
     }
 
     #[test]
