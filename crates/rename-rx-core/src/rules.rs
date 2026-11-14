@@ -504,6 +504,7 @@ pub enum MoveAnchor {
 /// Adds a sequential number to the base name.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+#[non_exhaustive]
 pub struct SerializeRule {
     /// Whether the rule runs.
     pub enabled: bool,
@@ -741,15 +742,25 @@ impl<'rules> CompiledRules<'rules> {
         &self.errors
     }
 
-    /// Apply the pipeline to one file. `index` is the position of the file in
-    /// the current (sorted) order and drives serialization; `batch_len` is the
-    /// number of files in that order and sizes automatic zero-padding.
-    pub fn apply(&self, file: &FileEntry, index: usize, batch_len: usize) -> String {
-        self.apply_parts(file, index, batch_len).file_name()
+    /// Apply the pipeline to every file in `order`, returning the parts for
+    /// each file indexed like `files`.
+    ///
+    /// The batch length comes from `order`, so automatic padding always sees
+    /// the real number of files instead of a value supplied by the caller.
+    pub fn apply_batch(&self, files: &[FileEntry], order: &[usize]) -> Vec<NameParts> {
+        let mut parts = vec![NameParts::default(); files.len()];
+
+        for (position, &index) in order.iter().enumerate() {
+            if let Some(file) = files.get(index) {
+                parts[index] = self.apply_parts(file, position, order.len());
+            }
+        }
+
+        parts
     }
 
     /// Apply the pipeline and return the stem and extension separately.
-    pub fn apply_parts(&self, file: &FileEntry, index: usize, batch_len: usize) -> NameParts {
+    fn apply_parts(&self, file: &FileEntry, index: usize, batch_len: usize) -> NameParts {
         let (stem, extension) = file.name_parts();
         let mut stem = stem.to_owned();
         let mut extension = extension.to_owned();
@@ -1040,7 +1051,9 @@ mod tests {
     }
 
     fn apply(rules: &RuleSet, name: &str, index: usize, batch_len: usize) -> String {
-        CompiledRules::new(rules).apply(&entry(name), index, batch_len)
+        CompiledRules::new(rules)
+            .apply_parts(&entry(name), index, batch_len)
+            .file_name()
     }
 
     fn rule_mut<'a, T>(
@@ -1559,7 +1572,10 @@ mod tests {
 
         let compiled = CompiledRules::new(&rules);
         assert_eq!(compiled.errors.len(), 1);
-        assert_eq!(compiled.apply(&entry("a.txt"), 0, 1), "a.txt");
+        assert_eq!(
+            compiled.apply_parts(&entry("a.txt"), 0, 1).file_name(),
+            "a.txt"
+        );
     }
 
     #[test]

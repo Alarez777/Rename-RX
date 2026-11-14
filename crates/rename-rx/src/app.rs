@@ -3535,20 +3535,16 @@ fn serialize_row(
     meta: RuleRowMeta,
     rule: &mut SerializeRule,
 ) -> bool {
-    let SerializeRule {
-        enabled,
-        start,
-        step: _,
-        offset,
-        padding: _,
-        auto_padding: _,
-        position,
-        prefix,
-        suffix,
-    } = rule;
+    // `SerializeRule` is non-exhaustive, so borrow the fields the row edits
+    // separately from the enable checkbox.
+    let start = &mut rule.start;
+    let offset = &mut rule.offset;
+    let position = &mut rule.position;
+    let prefix = &mut rule.prefix;
+    let suffix = &mut rule.suffix;
     RuleRow::new(
         "Serialize",
-        enabled,
+        &mut rule.enabled,
         Some(RuleSettings::Serialize),
         context,
         meta,

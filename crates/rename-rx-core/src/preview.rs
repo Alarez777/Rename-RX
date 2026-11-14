@@ -77,14 +77,8 @@ pub struct PreviewResult {
 pub fn build_preview(files: &[FileEntry], rules: &RuleSet) -> PreviewResult {
     let order = sorted_indices(files, rules.sort());
     let compiled = CompiledRules::new(rules);
-    let mut previews = vec![String::new(); files.len()];
-    let mut parts = vec![NameParts::default(); files.len()];
-
-    for (position, &index) in order.iter().enumerate() {
-        let result = compiled.apply_parts(&files[index], position, order.len());
-        previews[index] = result.file_name();
-        parts[index] = result;
-    }
+    let parts = compiled.apply_batch(files, &order);
+    let previews: Vec<String> = parts.iter().map(NameParts::file_name).collect();
 
     let mut report = validate(files, &order, &previews, &parts, rules, compiled.errors());
     // Errors first, then warnings, then informational findings.
