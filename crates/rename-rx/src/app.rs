@@ -2684,6 +2684,18 @@ impl RenameRxApp {
                                     )
                                 })
                                 .inner;
+                            ui.add_space(6.0);
+                            changed |= ui
+                                .add_enabled_ui(rule.auto_padding, |ui| {
+                                    labeled_spinbox_u32(
+                                        ui,
+                                        "Min width",
+                                        &mut rule.min_padding,
+                                        1..=12,
+                                        SPINBOX_WIDTH,
+                                    )
+                                })
+                                .inner;
 
                             ui.add_space(12.0);
                             ui.label(RichText::new("Prefix").size(12.5).color(palette.secondary));
@@ -2695,8 +2707,9 @@ impl RenameRxApp {
 
                             ui.add_space(6.0);
                             let hint = if rule.auto_padding {
-                                "Automatic padding fits the widest number in the batch \
-                                 (10 files → 01 … 10). The width above is kept for manual mode."
+                                "Automatic padding fits the widest number in the batch and \
+                                 never goes below the minimum (5 files with 2 → 01 … 05). \
+                                 The width above is kept for manual mode."
                             } else {
                                 "Padding is the total width of the number (3 → 001). \
                                  The default prefix is a space."

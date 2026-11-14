@@ -79,8 +79,10 @@ duplicate is inserted below and shows a `−` to remove it. The order shown in t
 panel is the execution order.
 
 Serialize pads automatically by default: the width follows the largest number
-in the batch (`10 files → 01 … 10`). Uncheck **Automatic padding** in its
-settings to fix a width, and the last width is kept while automatic is on.
+in the batch, with a minimum of two digits (`5 files → 01 … 05`), so a short
+series keeps a convention like `s01e08`. The minimum is the **Min width** field
+in the rule settings; uncheck **Automatic padding** there to fix a width
+instead, and the last width is kept while automatic is on.
 
 The live preview uses the same pipeline as the actual rename.
 

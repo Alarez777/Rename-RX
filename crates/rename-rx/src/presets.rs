@@ -130,6 +130,7 @@ mod tests {
         serialize(&mut rules).enabled = true;
         serialize(&mut rules).auto_padding = false;
         serialize(&mut rules).padding = 4;
+        serialize(&mut rules).min_padding = 3;
         serialize(&mut rules).position = SerializePosition::Before;
 
         // Duplicates are part of the persisted state.
@@ -222,6 +223,7 @@ mod tests {
 
         assert_eq!(serialize.padding, 5);
         assert!(!serialize.auto_padding);
+        assert_eq!(serialize.min_padding, 2);
     }
 
     #[test]
@@ -240,6 +242,7 @@ mod tests {
 
         assert_eq!(serialize.padding, 3);
         assert!(serialize.auto_padding);
+        assert_eq!(serialize.min_padding, 2);
     }
 
     #[test]
@@ -265,6 +268,7 @@ mod tests {
 
         assert_eq!(serialize.padding, 2);
         assert!(!serialize.auto_padding);
+        assert_eq!(serialize.min_padding, 2);
     }
 
     #[test]
@@ -272,6 +276,7 @@ mod tests {
         let mut rules = RuleSet::default();
         serialize(&mut rules).auto_padding = true;
         serialize(&mut rules).padding = 2;
+        serialize(&mut rules).min_padding = 4;
         let json = serde_json::to_string(&rules).unwrap();
 
         let restored: RuleSet = serde_json::from_str(&json).unwrap();
@@ -286,6 +291,7 @@ mod tests {
 
         assert!(serialize.auto_padding);
         assert_eq!(serialize.padding, 2);
+        assert_eq!(serialize.min_padding, 4);
     }
 
     #[test]

@@ -525,6 +525,10 @@ pub struct SerializeRule {
     /// their manual padding unchanged.
     #[serde(default)]
     pub auto_padding: bool,
+    /// Smallest width used while [`Self::auto_padding`] is on.
+    ///
+    /// Lets a short series keep a two-digit convention such as `s01e08`.
+    pub min_padding: u32,
     /// Where the number is placed.
     pub position: SerializePosition,
     /// Text before the number.
@@ -536,6 +540,9 @@ pub struct SerializeRule {
 /// Manual width used until the user picks one.
 const DEFAULT_PADDING: u32 = 3;
 
+/// Automatic width used until the user picks a different minimum.
+const DEFAULT_MIN_PADDING: u32 = 2;
+
 impl Default for SerializeRule {
     fn default() -> Self {
         Self {
@@ -545,6 +552,7 @@ impl Default for SerializeRule {
             offset: 0,
             padding: DEFAULT_PADDING,
             auto_padding: true,
+            min_padding: DEFAULT_MIN_PADDING,
             position: SerializePosition::Before,
             // A trailing space keeps the default `001 name` layout; the space
             // travels with the number rather than being a separate separator.
@@ -556,7 +564,8 @@ impl Default for SerializeRule {
 
 impl SerializeRule {
     /// Width used for a batch: [`Self::padding`] or the digits of the largest
-    /// number this rule will generate for that many files.
+    /// number this rule will generate for that many files, never fewer than
+    /// [`Self::min_padding`].
     fn effective_padding(&self, batch_len: usize) -> u32 {
         if !self.auto_padding {
             return self.padding;
@@ -566,7 +575,7 @@ impl SerializeRule {
         let last = u64::from(self.start)
             .saturating_add(steps.saturating_mul(u64::from(self.step)))
             .saturating_add(u64::from(self.offset));
-        decimal_width(last)
+        decimal_width(last).max(self.min_padding)
     }
 }
 
@@ -1153,11 +1162,11 @@ mod tests {
 
         assert_eq!(
             apply(&rules, "HEC-0941.jpg", 0, 2),
-            "1 París Winter 2017.jpg"
+            "01 París Winter 2017.jpg"
         );
         assert_eq!(
             apply(&rules, "HEC-0942.jpg", 1, 2),
-            "2 París Winter 2017.jpg"
+            "02 París Winter 2017.jpg"
         );
     }
 
@@ -1172,7 +1181,7 @@ mod tests {
         suffix(&mut rules).enabled = true;
         suffix(&mut rules).text = "!".to_owned();
 
-        assert_eq!(apply(&rules, "a.jpg", 0, 1), "X 1 Pic!.jpg");
+        assert_eq!(apply(&rules, "a.jpg", 0, 1), "X 01 Pic!.jpg");
     }
 
     #[test]
@@ -1447,6 +1456,7 @@ mod tests {
         assert_eq!(rule.offset, 0);
         assert_eq!(rule.padding, 3);
         assert!(rule.auto_padding);
+        assert_eq!(rule.min_padding, 2);
         assert_eq!(rule.position, SerializePosition::Before);
         assert_eq!(rule.prefix, "");
         assert_eq!(rule.suffix, " ");
@@ -1475,12 +1485,34 @@ mod tests {
         serialize(&mut rules).prefix.clear();
         serialize(&mut rules).suffix = "-".to_owned();
 
-        assert_eq!(apply(&rules, "a.txt", 8, 9), "9-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 8, 9), "09-a.txt");
         assert_eq!(apply(&rules, "a.txt", 0, 10), "01-a.txt");
         assert_eq!(apply(&rules, "a.txt", 9, 10), "10-a.txt");
         assert_eq!(apply(&rules, "a.txt", 0, 100), "001-a.txt");
         assert_eq!(apply(&rules, "a.txt", 99, 100), "100-a.txt");
         assert_eq!(apply(&rules, "a.txt", 999, 1000), "1000-a.txt");
+    }
+
+    #[test]
+    fn serialize_auto_padding_respects_the_minimum_width() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 0, 5), "01-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 4, 5), "05-a.txt");
+
+        serialize(&mut rules).min_padding = 4;
+        assert_eq!(apply(&rules, "a.txt", 0, 5), "0001-a.txt");
+
+        serialize(&mut rules).auto_padding = false;
+        serialize(&mut rules).padding = 1;
+        assert_eq!(
+            apply(&rules, "a.txt", 0, 5),
+            "1-a.txt",
+            "manual padding ignores the automatic minimum"
+        );
     }
 
     #[test]
@@ -1506,8 +1538,8 @@ mod tests {
         serialize(&mut rules).start = 0;
         assert_eq!(
             apply(&rules, "a.txt", 9, 10),
-            "9-a.txt",
-            "zero-based numbers use one digit for a ten-file batch"
+            "09-a.txt",
+            "zero-based numbers keep the two-digit minimum"
         );
     }
 
