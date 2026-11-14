@@ -35,6 +35,10 @@ esac
 APPIMAGETOOL="$TOOLS/appimagetool-${TOOL_ARCH}.AppImage"
 APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${TOOL_ARCH}.AppImage}"
 URUNTIME_VERSION="${RENAME_RX_URUNTIME_VERSION:-v0.8.3}"
+if [[ ! "$URUNTIME_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: invalid uruntime version: $URUNTIME_VERSION (expected vX.Y.Z)" >&2
+    exit 1
+fi
 URUNTIME="$TOOLS/uruntime-appimage-squashfs-lite-${TARGET_ARCH}-${URUNTIME_VERSION}"
 URUNTIME_URL="${RENAME_RX_URUNTIME_URL:-https://github.com/VHSgunzo/uruntime/releases/download/${URUNTIME_VERSION}/uruntime-appimage-squashfs-lite-${TARGET_ARCH}}"
 
@@ -43,6 +47,17 @@ case "$TARGET_ARCH" in
     *)
         echo "error: unsupported architecture: $TARGET_ARCH (use x86_64 or aarch64)" >&2
         exit 1
+        ;;
+esac
+
+# SHA-256 digests published with uruntime v0.8.3. Override the digest when
+# testing another release through RENAME_RX_URUNTIME_VERSION.
+case "$TARGET_ARCH" in
+    x86_64)
+        URUNTIME_SHA256="${RENAME_RX_URUNTIME_SHA256:-85caec9c27c60933f1754281dd39b423f557b1d821a137698d98e6433f48e209}"
+        ;;
+    aarch64)
+        URUNTIME_SHA256="${RENAME_RX_URUNTIME_SHA256:-731fe2ae7eedee32284a4e70bd40cfabaa0b3c401c74fbec744e9d7dbbb725bb}"
         ;;
 esac
 
@@ -83,6 +98,12 @@ if [[ ! -x "$URUNTIME" ]]; then
     echo "Downloading uruntime ${URUNTIME_VERSION}..."
     curl --fail --location --silent --show-error "$URUNTIME_URL" -o "$URUNTIME"
     chmod 0755 "$URUNTIME"
+fi
+
+if ! printf '%s  %s\n' "$URUNTIME_SHA256" "$URUNTIME" | sha256sum --check --status; then
+    echo "error: checksum mismatch for $URUNTIME" >&2
+    echo "Delete the file and retry, or set RENAME_RX_URUNTIME_SHA256 for a different runtime." >&2
+    exit 1
 fi
 
 rm -f "$OUTPUT" "$OUTPUT.zsync"

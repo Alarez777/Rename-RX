@@ -155,9 +155,10 @@ cargo run -p rename-rx -- path/to/file1 path/to/file2
 
 The script builds a release binary on the host and downloads `appimagetool`
 and the pinned uruntime v0.8.3 release into `dist/.tools` on the first run.
-Set `RENAME_RX_URUNTIME_VERSION` to test another uruntime tag. To package a
-binary built elsewhere (for example in Debian 12 for older glibc
-compatibility):
+The runtime is verified against its published SHA-256; if you test another
+release with `RENAME_RX_URUNTIME_VERSION`, set `RENAME_RX_URUNTIME_SHA256`
+too. To package a binary built elsewhere (for example in Debian 12 for older
+glibc compatibility):
 
 ```sh
 RENAME_RX_SKIP_BUILD=1 \
