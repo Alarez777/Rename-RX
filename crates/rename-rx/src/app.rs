@@ -2748,6 +2748,9 @@ impl RenameRxApp {
         }
 
         if changed {
+            if let Some(rule) = self.rules.rules_mut().get_mut(target.index) {
+                rule.enable();
+            }
             self.preview.dirty = true;
             ctx.request_repaint();
         }
@@ -3668,6 +3671,9 @@ impl<'a, 'context> RuleRow<'a, 'context> {
         let palette = context.palette;
         let columns = context.columns;
         let mut changed = false;
+        // Edits in a rule's own controls turn it on; the enable checkbox and
+        // the name label stay pure toggles.
+        let mut controls_changed = false;
 
         // Sibling row UIs share the same scope id, so fixed combo-box salts
         // would collide across duplicate rows. Scope each row by its index.
@@ -3732,7 +3738,7 @@ impl<'a, 'context> RuleRow<'a, 'context> {
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.set_width(columns.controls);
-                        changed |= controls(ui);
+                        controls_changed = controls(ui);
                     },
                 );
 
@@ -3754,6 +3760,11 @@ impl<'a, 'context> RuleRow<'a, 'context> {
                 );
             });
         });
+
+        if controls_changed {
+            *enabled = true;
+            changed = true;
+        }
 
         changed
     }
