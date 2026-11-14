@@ -1,13 +1,14 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Local};
 use eframe::egui::{
     self, Align, Align2, Button, Color32, ComboBox, CornerRadius, CursorIcon, FontFamily, FontId,
     Frame, Key, LayerId, Layout, Margin, Modifiers, Order, Rect, ResizeDirection, RichText, Sense,
-    Shadow, Stroke, StrokeKind, TextEdit, TextStyle, Theme, Ui, ViewportCommand, pos2, vec2,
+    Shadow, Stroke, StrokeKind, TextEdit, Theme, Ui, ViewportCommand, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder, TableRow};
 use rename_rx_core::{
@@ -18,21 +19,26 @@ use rename_rx_core::{
     plan_steps,
 };
 
+use crate::instance::InstanceServer;
 use crate::settings::{self, Settings, ThemePreference, WindowControlsStyle};
 use crate::theme::{self, Palette, semibold};
 use crate::tools::{Tool, ToolState, show_tools_used_by};
 
 const ROW_HEIGHT: f32 = 30.0;
 const TABLE_HEADER_HEIGHT: f32 = 30.0;
-const INDEX_COLUMN_WIDTH: f32 = 42.0;
+const INDEX_COLUMN_DEFAULT_WIDTH: f32 = 42.0;
+const INDEX_COLUMN_MIN_WIDTH: f32 = 36.0;
+const INDEX_COLUMN_MAX_WIDTH: f32 = 64.0;
 const ORIGINAL_COLUMN_DEFAULT_WIDTH: f32 = 280.0;
 const ORIGINAL_COLUMN_MIN_WIDTH: f32 = 150.0;
-const TYPE_COLUMN_WIDTH: f32 = 78.0;
+const TYPE_COLUMN_DEFAULT_WIDTH: f32 = 78.0;
+const TYPE_COLUMN_MIN_WIDTH: f32 = 60.0;
+const TYPE_COLUMN_MAX_WIDTH: f32 = 120.0;
 const PREVIEW_MIN_WIDTH: f32 = 160.0;
-const CREATED_COLUMN_WIDTH: f32 = 104.0;
-const FILE_TABLE_FIXED_WIDTH: f32 = INDEX_COLUMN_WIDTH + TYPE_COLUMN_WIDTH + CREATED_COLUMN_WIDTH;
+const CREATED_COLUMN_DEFAULT_WIDTH: f32 = 104.0;
+const CREATED_COLUMN_MIN_WIDTH: f32 = 90.0;
+const CREATED_COLUMN_MAX_WIDTH: f32 = 140.0;
 const COLUMN_RESIZE_GRAB_WIDTH: f32 = 8.0;
-const ORIGINAL_COLUMN_FIT_PADDING: f32 = 16.0;
 const HEADER_FONT_SIZE: f32 = 12.5;
 const RULE_ROW_HEIGHT: f32 = 34.0;
 const RULE_ACTION_SIZE: f32 = 24.0;
@@ -43,6 +49,8 @@ const SPINBOX_WIDTH: f32 = 72.0;
 const SPIN_HOLD_DELAY_SECS: f64 = 0.4;
 /// Interval between repeated steps while a spin arrow is held, in seconds.
 const SPIN_HOLD_INTERVAL_SECS: f64 = 0.08;
+/// How long to wait for the compositor to answer an activation-token request.
+const WINDOW_TOKEN_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(Clone, Copy)]
 struct RuleColumns {
@@ -67,8 +75,6 @@ struct FileTableContext<'a> {
     order: &'a [usize],
     previews: &'a [String],
     palette: &'a Palette,
-    grid: Stroke,
-    original_separator: Stroke,
 }
 
 struct Notice {
@@ -267,6 +273,12 @@ struct Requests {
     rename: bool,
 }
 
+/// A spawned window waiting for a compositor activation token.
+struct PendingWindow {
+    paths: Vec<PathBuf>,
+    requested_at: Instant,
+}
+
 pub(crate) struct RenameRxApp {
     settings: Settings,
     theme: Theme,
@@ -280,7 +292,8 @@ pub(crate) struct RenameRxApp {
     selected: BTreeSet<u64>,
     selection_anchor: Option<usize>,
     preview: PreviewCache,
-    original_column_width: f32,
+    created_column_width: f32,
+    last_file_table_width: f32,
     status: String,
     requests: Requests,
     last_rename: Option<Vec<RenameOutcome>>,
@@ -299,10 +312,20 @@ pub(crate) struct RenameRxApp {
     tools_open: bool,
     desktop_notice: Option<Notice>,
     file_manager_notice: Option<Notice>,
+    /// Keeps the instance socket bound for as long as the window is open.
+    instance: Option<InstanceServer>,
+    incoming: Option<Receiver<Vec<PathBuf>>>,
+    incoming_files: Vec<PathBuf>,
+    incoming_error: Option<String>,
+    pending_window: Option<PendingWindow>,
 }
 
 impl RenameRxApp {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>, initial_paths: Vec<PathBuf>) -> Self {
+    pub(crate) fn new(
+        cc: &eframe::CreationContext<'_>,
+        initial_paths: Vec<PathBuf>,
+        server: Option<InstanceServer>,
+    ) -> Self {
         theme::install(&cc.egui_ctx);
 
         let settings = Settings::load();
@@ -328,7 +351,8 @@ impl RenameRxApp {
             selected: BTreeSet::new(),
             selection_anchor: None,
             preview: PreviewCache::new(),
-            original_column_width: ORIGINAL_COLUMN_DEFAULT_WIDTH,
+            created_column_width: CREATED_COLUMN_DEFAULT_WIDTH,
+            last_file_table_width: 0.0,
             status: "Ready".to_owned(),
             requests: Requests::default(),
             last_rename: None,
@@ -346,9 +370,28 @@ impl RenameRxApp {
             tools_open: false,
             desktop_notice: None,
             file_manager_notice: None,
+            instance: None,
+            incoming: None,
+            incoming_files: Vec::new(),
+            incoming_error: None,
+            pending_window: None,
         };
 
         app.add_paths(initial_paths);
+
+        if let Some(server) = server {
+            let ctx = cc.egui_ctx.clone();
+            match server.start(move || ctx.request_repaint()) {
+                Ok(receiver) => {
+                    app.instance = Some(server);
+                    app.incoming = Some(receiver);
+                }
+                Err(error) => {
+                    log::warn!("could not listen for other Rename RX launches: {error}");
+                }
+            }
+        }
+
         app
     }
 
@@ -408,6 +451,209 @@ impl RenameRxApp {
         self.theme = self.settings.theme.resolve(self.system_dark);
         theme::set(ctx, self.theme);
         self.settings.save();
+    }
+
+    // -------------------------------------------------------------- instance
+
+    fn poll_incoming(&mut self, ctx: &egui::Context) {
+        let mut received = Vec::new();
+        if let Some(receiver) = &self.incoming {
+            while let Ok(paths) = receiver.try_recv() {
+                received.push(paths);
+            }
+        }
+
+        let had_request = !received.is_empty();
+        for paths in received {
+            if paths.is_empty() {
+                continue;
+            }
+
+            self.incoming_files.extend(paths);
+            self.incoming_error = None;
+        }
+
+        if self.files.is_empty() && !self.incoming_files.is_empty() {
+            let paths = std::mem::take(&mut self.incoming_files);
+            self.add_paths(paths);
+        }
+
+        if had_request {
+            Self::focus_window(ctx);
+        }
+    }
+
+    fn focus_window(ctx: &egui::Context) {
+        // Wayland refuses focus requests from background windows and cannot
+        // unminimize. In both backends, ask for attention as a fallback.
+        if !is_wayland_session() {
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        }
+        ctx.send_viewport_cmd(ViewportCommand::RequestUserAttention(
+            egui::UserAttentionType::Critical,
+        ));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+    }
+
+    /// Modals that must delay the incoming-files prompt. This is broader than
+    /// the shortcut guard so the prompt never stacks on another modal.
+    fn other_modal_open(&self) -> bool {
+        self.modals.settings
+            || self.modals.about
+            || self.modals.validation
+            || self.rule_settings.is_some()
+            || self.tools_open
+            || self.preset_ui.open
+            || self.preset_delete.is_some()
+            || self.confirm_rename_open
+            || self.rename_error.is_some()
+    }
+
+    fn incoming_modal(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.incoming_files.is_empty()
+            || self.other_modal_open()
+            || self.pending_window.is_some()
+        {
+            return;
+        }
+
+        let palette = self.palette();
+        let existing = self.files.len();
+        let incoming = self.incoming_files.len();
+        let mut replace = false;
+        let mut new_window = false;
+        let mut cancel = false;
+
+        egui::Modal::new(egui::Id::unique("incoming_files_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(480.0);
+
+                ui.label(
+                    RichText::new("Files already open")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!(
+                        "This window already has {existing} {}. {incoming} new {} opened from \
+                         another window.",
+                        plural(existing, "file", "files"),
+                        plural(incoming, "file was", "files were"),
+                    ))
+                    .size(13.5)
+                    .color(palette.text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "Replace the current list, or open the new files in a separate window.",
+                    )
+                    .size(13.0)
+                    .color(palette.secondary),
+                );
+
+                if let Some(error) = &self.incoming_error {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(error).size(12.5).color(palette.danger));
+                }
+
+                ui.add_space(20.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Replace List").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(120.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        replace = true;
+                    }
+
+                    if ui.button("Open in New Window").clicked() {
+                        new_window = true;
+                    }
+
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        // Clicking the backdrop must not dismiss a decision this important.
+        // Escape remains an explicit cancel; a popup gets it first.
+        let escape = !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+        if escape {
+            cancel = true;
+        }
+
+        if replace {
+            self.incoming_error = None;
+            let paths = std::mem::take(&mut self.incoming_files);
+            self.clear_files();
+            self.add_paths(paths);
+            Self::focus_window(ctx);
+        } else if new_window {
+            let paths = std::mem::take(&mut self.incoming_files);
+            frame.request_activation_token();
+            self.pending_window = Some(PendingWindow {
+                paths,
+                requested_at: Instant::now(),
+            });
+            self.incoming_error = None;
+        } else if cancel {
+            self.incoming_error = None;
+            self.incoming_files.clear();
+        }
+    }
+
+    fn poll_pending_window(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.pending_window.is_none() {
+            // Discard a late token so a later request cannot consume it.
+            let _ = frame.take_activation_token();
+            return;
+        }
+
+        let token = frame.take_activation_token();
+        let expired = self
+            .pending_window
+            .as_ref()
+            .is_some_and(|pending| pending.requested_at.elapsed() >= WINDOW_TOKEN_TIMEOUT);
+        if token.is_none() && !expired {
+            ctx.request_repaint_after(Duration::from_millis(50));
+            return;
+        }
+
+        let Some(pending) = self.pending_window.take() else {
+            return;
+        };
+        match Self::open_new_instance(&pending.paths, token.as_deref()) {
+            Ok(()) => self.incoming_error = None,
+            Err(error) => {
+                self.incoming_error = Some(error);
+                // Requests that arrived while the child was being prepared
+                // must not be dropped along with the failed spawn.
+                let mut paths = pending.paths;
+                paths.append(&mut self.incoming_files);
+                self.incoming_files = paths;
+            }
+        }
+    }
+
+    fn open_new_instance(paths: &[PathBuf], activation_token: Option<&str>) -> Result<(), String> {
+        let launcher = crate::integration::launcher()
+            .ok_or_else(|| "Could not locate the Rename RX executable.".to_owned())?;
+        new_instance_command(launcher, paths, activation_token)
+            .spawn()
+            .map(|_child| ())
+            .map_err(|error| format!("Could not open a new window: {error}"))
     }
 
     // ---------------------------------------------------------------- files
@@ -664,6 +910,7 @@ impl RenameRxApp {
             || self.tools_open
             || self.confirm_rename_open
             || self.rename_error.is_some()
+            || !self.incoming_files.is_empty()
             || egui::Popup::is_any_open(ctx)
         {
             return;
@@ -1067,98 +1314,139 @@ impl RenameRxApp {
 
         let table_rect = ui.available_rect_before_wrap();
         let spacing = ui.spacing().item_spacing.x;
-        let max_width = original_column_max_width(
-            table_rect.width() - ui.spacing().scroll.allocated_width(),
-            spacing,
-        );
-        let width = self
-            .original_column_width
-            .clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_width);
-        let resize_id = ui.make_persistent_id("original_column_resize");
-        let resize_hovered = ui
-            .ctx()
-            .read_response(resize_id)
-            .is_some_and(|response| response.hovered() || response.dragged());
-        let grid = Stroke::new(1.0, palette.grid);
-        let original_separator = if resize_hovered {
-            Stroke::new(1.0, palette.accent)
-        } else {
-            grid
-        };
-        let mut original_header_rect = Rect::NOTHING;
+        let table_width = table_rect.width() - ui.spacing().scroll.allocated_width();
+        let max_original_width = original_column_max_width(table_width, spacing);
+        let original_width =
+            ORIGINAL_COLUMN_DEFAULT_WIDTH.clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_original_width);
+        let created_width = self
+            .created_column_width
+            .clamp(CREATED_COLUMN_MIN_WIDTH, CREATED_COLUMN_MAX_WIDTH);
+        let resize_id = ui.make_persistent_id("created_column_resize");
+        // egui_extras stores absolute column widths. Reset them when the table
+        // shrinks so the stored widths cannot overflow the new area.
+        let reset_widths =
+            self.last_file_table_width > 0.0 && table_width < self.last_file_table_width - 0.5;
+        self.last_file_table_width = table_width;
+        let mut header_rects = [Rect::NOTHING; 5];
 
-        {
-            let context = FileTableContext {
-                files: &self.files,
-                selected: &self.selected,
-                order: &self.preview.order,
-                previews: &self.preview.previews,
-                palette: &palette,
-                grid,
-                original_separator,
-            };
+        let table_top = ui.cursor().top();
+        let table_bottom = ui
+            .scope(|ui| {
+                // egui_extras paints the native separators with these strokes.
+                let visuals = ui.visuals_mut();
+                visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.grid);
+                visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, palette.accent);
+                visuals.widgets.active.bg_stroke = Stroke::new(1.0, palette.accent);
 
-            TableBuilder::new(ui)
-                .striped(false)
-                .resizable(false)
-                .sense(Sense::click())
-                .cell_layout(Layout::left_to_right(Align::Center))
-                .column(Column::exact(INDEX_COLUMN_WIDTH))
-                .column(Column::exact(width))
-                .column(Column::exact(TYPE_COLUMN_WIDTH))
-                .column(Column::remainder().at_least(PREVIEW_MIN_WIDTH).clip(true))
-                .column(Column::exact(CREATED_COLUMN_WIDTH))
-                .header(TABLE_HEADER_HEIGHT, |header| {
-                    original_header_rect = file_table_header(header, &context);
-                })
-                .body(|body| {
-                    body.rows(ROW_HEIGHT, context.order.len(), |row| {
-                        if let Some(click) = file_table_row(row, &context) {
-                            clicked = Some(click);
-                        }
+                let context = FileTableContext {
+                    files: &self.files,
+                    selected: &self.selected,
+                    order: &self.preview.order,
+                    previews: &self.preview.previews,
+                    palette: &palette,
+                };
+
+                let builder = TableBuilder::new(ui)
+                    .id_salt("file_table")
+                    .striped(false)
+                    .resizable(true)
+                    .sense(Sense::click())
+                    .cell_layout(Layout::left_to_right(Align::Center))
+                    .column(
+                        Column::initial(INDEX_COLUMN_DEFAULT_WIDTH)
+                            .range(INDEX_COLUMN_MIN_WIDTH..=INDEX_COLUMN_MAX_WIDTH)
+                            .clip(true),
+                    )
+                    .column(
+                        Column::initial(original_width)
+                            .range(ORIGINAL_COLUMN_MIN_WIDTH..=max_original_width)
+                            .clip(true),
+                    )
+                    .column(
+                        Column::initial(TYPE_COLUMN_DEFAULT_WIDTH)
+                            .range(TYPE_COLUMN_MIN_WIDTH..=TYPE_COLUMN_MAX_WIDTH)
+                            .clip(true),
+                    )
+                    .column(
+                        Column::remainder()
+                            .at_least(PREVIEW_MIN_WIDTH)
+                            .clip(true)
+                            .resizable(false),
+                    )
+                    .column(
+                        Column::initial(created_width)
+                            .range(CREATED_COLUMN_MIN_WIDTH..=CREATED_COLUMN_MAX_WIDTH)
+                            .clip(true)
+                            .resizable(false),
+                    );
+
+                if reset_widths {
+                    builder.reset();
+                }
+
+                builder
+                    .header(TABLE_HEADER_HEIGHT, |header| {
+                        header_rects = file_table_header(header, &context);
+                    })
+                    .body(|body| {
+                        body.rows(ROW_HEIGHT, context.order.len(), |row| {
+                            if let Some(click) = file_table_row(row, &context) {
+                                clicked = Some(click);
+                            }
+                        });
                     });
-                });
-        }
 
-        if let Some((id, display_index)) = clicked {
+                ui.min_rect().bottom()
+            })
+            .inner;
+
+        if let Some((id, display_index)) = clicked
+            && !pointer_on_column_separator(ui, &header_rects, spacing)
+        {
             self.select_row(id, display_index, modifiers);
         }
 
-        if original_header_rect.is_positive() {
-            let boundary_x = original_header_rect.right() - 0.5;
+        if header_rects[4].is_positive() {
+            let boundary_x = header_rects[4].left() - spacing * 0.5;
             let handle_rect = Rect::from_x_y_ranges(
                 (boundary_x - COLUMN_RESIZE_GRAB_WIDTH * 0.5)
                     ..=(boundary_x + COLUMN_RESIZE_GRAB_WIDTH * 0.5),
-                original_header_rect.y_range(),
+                table_top..=table_bottom,
             );
-            self.resize_original_column(ui, resize_id, handle_rect, width, max_width, &palette);
+            self.resize_created_column(ui, resize_id, handle_rect, boundary_x, &palette);
         }
     }
 
-    fn resize_original_column(
+    fn resize_created_column(
         &mut self,
         ui: &mut Ui,
         resize_id: egui::Id,
         handle_rect: Rect,
-        width: f32,
-        max_width: f32,
+        boundary_x: f32,
         palette: &Palette,
     ) {
         let response = ui.interact(handle_rect, resize_id, Sense::click_and_drag());
 
         if response.dragged() {
-            self.original_column_width =
-                (width + response.drag_delta().x).clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_width);
+            self.created_column_width =
+                resized_created_width(self.created_column_width, response.drag_delta().x);
             ui.ctx().request_repaint();
         } else if response.double_clicked() {
-            let fit = original_name_fit_width(ui, &self.files, palette);
-            self.original_column_width = fit.clamp(ORIGINAL_COLUMN_MIN_WIDTH, max_width);
+            self.created_column_width = CREATED_COLUMN_DEFAULT_WIDTH;
             ui.ctx().request_repaint();
         }
 
         if response.hovered() || response.dragged() {
             ui.ctx().set_cursor_icon(CursorIcon::ResizeColumn);
         }
+
+        let stroke = if response.hovered() || response.dragged() {
+            Stroke::new(1.0, palette.accent)
+        } else {
+            Stroke::new(1.0, palette.grid)
+        };
+        ui.painter()
+            .vline(boundary_x, handle_rect.y_range(), stroke);
     }
 
     fn empty_state(&self, ui: &mut Ui) {
@@ -2557,10 +2845,11 @@ impl RenameRxApp {
 }
 
 impl eframe::App for RenameRxApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
         self.poll_system_theme(&ctx);
+        self.poll_incoming(&ctx);
         if self.settings.window_controls.resolved() == WindowControlsStyle::Adwaita {
             handle_window_resize(&ctx);
         }
@@ -2598,6 +2887,8 @@ impl eframe::App for RenameRxApp {
         self.presets_modal(&ctx);
         self.tools_modal(&ctx);
         self.about_modal(&ctx);
+        self.incoming_modal(&ctx, frame);
+        self.poll_pending_window(&ctx, frame);
         self.drag_overlay(&ctx);
 
         if self.requests.rename {
@@ -2657,68 +2948,107 @@ fn format_date(time: Option<SystemTime>) -> String {
     )
 }
 
-fn paint_column_separator(ui: &Ui, stroke: Stroke) {
-    let rect = ui.max_rect();
-    ui.painter()
-        .vline(rect.right() - 0.5, rect.y_range(), stroke);
-}
-
 fn original_column_max_width(table_width: f32, spacing: f32) -> f32 {
-    // Five columns leave four gaps.
-    (table_width - FILE_TABLE_FIXED_WIDTH - PREVIEW_MIN_WIDTH - spacing * 4.0)
+    // Five columns leave four gaps. Reserve the maximum width of every other
+    // resizable column so any combination of widths leaves Preview usable.
+    (table_width
+        - INDEX_COLUMN_MAX_WIDTH
+        - TYPE_COLUMN_MAX_WIDTH
+        - CREATED_COLUMN_MAX_WIDTH
+        - PREVIEW_MIN_WIDTH
+        - spacing * 4.0)
         .max(ORIGINAL_COLUMN_MIN_WIDTH)
 }
 
-fn original_name_fit_width(ui: &Ui, files: &[FileEntry], palette: &Palette) -> f32 {
-    let header_width = ui
-        .painter()
-        .layout_no_wrap("Original File Name".to_owned(), header_font(), palette.text)
-        .size()
-        .x;
-    let body_font = ui
-        .style()
-        .text_styles
-        .get(&TextStyle::Body)
-        .cloned()
-        .unwrap_or_default();
-    let names_width = files
-        .iter()
-        .map(|file| {
-            ui.painter()
-                .layout_no_wrap(file.original_name.clone(), body_font.clone(), palette.text)
-                .size()
-                .x
-        })
-        .fold(0.0, f32::max);
-
-    header_width.max(names_width) + ORIGINAL_COLUMN_FIT_PADDING
+/// Dragging the Preview/Created separator right grows Preview and shrinks
+/// Created; the two columns split the same available space.
+fn resized_created_width(current: f32, drag_delta_x: f32) -> f32 {
+    (current - drag_delta_x).clamp(CREATED_COLUMN_MIN_WIDTH, CREATED_COLUMN_MAX_WIDTH)
 }
 
-fn file_table_header(mut header: TableRow<'_, '_>, context: &FileTableContext<'_>) -> Rect {
+/// True when the pointer is close enough to a column boundary that the click
+/// belongs to the resize handle rather than to the row underneath.
+fn pointer_on_column_separator(ui: &Ui, header_rects: &[Rect], spacing: f32) -> bool {
+    let Some(pointer) = ui.input(|input| input.pointer.latest_pos()) else {
+        return false;
+    };
+    let grab = ui
+        .style()
+        .interaction
+        .resize_grab_radius_side
+        .max(COLUMN_RESIZE_GRAB_WIDTH * 0.5);
+
+    header_rects.iter().take(4).any(|rect| {
+        let boundary = rect.right() + spacing * 0.5;
+        (pointer.x - boundary).abs() <= grab
+    })
+}
+
+/// Winit selects Wayland when either of these variables is present.
+fn is_wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty())
+        || std::env::var_os("WAYLAND_SOCKET").is_some_and(|value| !value.is_empty())
+}
+
+/// Build the command for a secondary window, forwarding a focus token.
+fn new_instance_command(
+    launcher: PathBuf,
+    paths: &[PathBuf],
+    activation_token: Option<&str>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(launcher);
+    command.arg("--new-instance");
+    command.arg("--");
+    command.args(paths);
+    command.env_remove("XDG_ACTIVATION_TOKEN");
+    command.env_remove("DESKTOP_STARTUP_ID");
+    if let Some(token) = activation_token {
+        command.env("XDG_ACTIVATION_TOKEN", token);
+        command.env("DESKTOP_STARTUP_ID", token);
+    }
+    command
+}
+
+fn file_table_header(mut header: TableRow<'_, '_>, context: &FileTableContext<'_>) -> [Rect; 5] {
+    let mut index_rect = Rect::NOTHING;
     header.col(|ui| {
+        index_rect = ui.max_rect();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             header_label(ui, "#", context.palette);
         });
-        paint_column_separator(ui, context.grid);
     });
-    let mut original_header_rect = Rect::NOTHING;
+
+    let mut original_rect = Rect::NOTHING;
     header.col(|ui| {
-        original_header_rect = ui.max_rect();
+        original_rect = ui.max_rect();
         header_label(ui, "Original File Name", context.palette);
-        paint_column_separator(ui, context.original_separator);
     });
+
+    let mut type_rect = Rect::NOTHING;
     header.col(|ui| {
+        type_rect = ui.max_rect();
         header_label(ui, "Type", context.palette);
-        paint_column_separator(ui, context.grid);
     });
+
+    let mut preview_rect = Rect::NOTHING;
     header.col(|ui| {
+        preview_rect = ui.max_rect();
         header_label(ui, "Preview File Name", context.palette);
-        paint_column_separator(ui, context.grid);
     });
+
+    let mut created_rect = Rect::NOTHING;
     header.col(|ui| {
+        created_rect = ui.max_rect();
         header_label(ui, "Created", context.palette);
     });
-    original_header_rect
+
+    [
+        index_rect,
+        original_rect,
+        type_rect,
+        preview_rect,
+        created_rect,
+    ]
 }
 
 fn file_table_row(
@@ -2743,7 +3073,6 @@ fn file_table_row(
                     .color(context.palette.secondary),
             );
         });
-        paint_column_separator(ui, context.grid);
     });
 
     row.col(|ui| {
@@ -2752,12 +3081,10 @@ fn file_table_row(
                 .truncate()
                 .selectable(false),
         );
-        paint_column_separator(ui, context.original_separator);
     });
 
     row.col(|ui| {
         paint_type_cell(ui, file.extension(), context.palette);
-        paint_column_separator(ui, context.grid);
     });
 
     row.col(|ui| {
@@ -2766,7 +3093,6 @@ fn file_table_row(
                 .truncate()
                 .selectable(false),
         );
-        paint_column_separator(ui, context.grid);
     });
 
     row.col(|ui| {
@@ -4214,6 +4540,8 @@ fn paint_empty_icon(ui: &mut Ui, palette: &Palette) {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
+
     use super::*;
 
     #[test]
@@ -4314,7 +4642,12 @@ mod tests {
         let spacing = 8.0;
         let table_width = 800.0;
         let max = original_column_max_width(table_width, spacing);
-        let used = FILE_TABLE_FIXED_WIDTH + max + PREVIEW_MIN_WIDTH + spacing * 4.0;
+        let used = INDEX_COLUMN_MAX_WIDTH
+            + max
+            + TYPE_COLUMN_MAX_WIDTH
+            + PREVIEW_MIN_WIDTH
+            + CREATED_COLUMN_MAX_WIDTH
+            + spacing * 4.0;
 
         assert!(
             (used - table_width).abs() < 0.01,
@@ -4326,5 +4659,75 @@ mod tests {
             (narrow - ORIGINAL_COLUMN_MIN_WIDTH).abs() < 0.01,
             "narrow tables must fall back to the minimum width, got {narrow}"
         );
+    }
+
+    #[test]
+    fn created_width_moves_inversely_with_the_preview_boundary() {
+        let wider_preview = resized_created_width(CREATED_COLUMN_DEFAULT_WIDTH, 10.0);
+        let wider_created = resized_created_width(CREATED_COLUMN_DEFAULT_WIDTH, -10.0);
+
+        assert!(
+            (wider_preview - (CREATED_COLUMN_DEFAULT_WIDTH - 10.0)).abs() < 0.01,
+            "dragging right must shrink Created, got {wider_preview}"
+        );
+        assert!(
+            (wider_created - (CREATED_COLUMN_DEFAULT_WIDTH + 10.0)).abs() < 0.01,
+            "dragging left must grow Created, got {wider_created}"
+        );
+        assert!(
+            (resized_created_width(CREATED_COLUMN_DEFAULT_WIDTH, 100.0) - CREATED_COLUMN_MIN_WIDTH)
+                .abs()
+                < 0.01,
+            "Created must stop at its minimum width"
+        );
+        assert!(
+            (resized_created_width(CREATED_COLUMN_DEFAULT_WIDTH, -100.0)
+                - CREATED_COLUMN_MAX_WIDTH)
+                .abs()
+                < 0.01,
+            "Created must stop at its maximum width"
+        );
+    }
+
+    #[test]
+    fn new_window_command_forwards_the_activation_token() {
+        let command = new_instance_command(
+            PathBuf::from("/tmp/rename-rx"),
+            &[PathBuf::from("/tmp/a.txt")],
+            Some("token-123"),
+        );
+
+        let args: Vec<OsString> = command.get_args().map(OsStr::to_owned).collect();
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("--new-instance"),
+                OsString::from("--"),
+                OsString::from("/tmp/a.txt"),
+            ]
+        );
+
+        let token = command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("XDG_ACTIVATION_TOKEN"))
+            .and_then(|(_, value)| value);
+        assert_eq!(token, Some(OsStr::new("token-123")));
+    }
+
+    #[test]
+    fn new_window_command_clears_stale_activation_tokens() {
+        let command = new_instance_command(
+            PathBuf::from("/tmp/rename-rx"),
+            &[PathBuf::from("/tmp/a.txt")],
+            None,
+        );
+
+        for name in ["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"] {
+            let value = command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(name))
+                .map(|(_, value)| value);
+            assert_eq!(value, Some(None), "{name} must be removed");
+        }
     }
 }

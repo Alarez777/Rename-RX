@@ -45,6 +45,8 @@ handled by those external tools.
 ### Batch workflow
 
 - Add files with the picker, drag and drop, or command-line arguments.
+- Opening files from a file manager reuses the open window. If it already has
+  files, Rename RX asks whether to replace the list or open a new window.
 - Multi-select with click, `Ctrl`/`Cmd`+click and `Shift`+click.
 - Live preview of every resulting file name.
 - Validity report with errors and warnings; errors block renaming.
