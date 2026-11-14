@@ -273,6 +273,56 @@ struct Requests {
     rename: bool,
 }
 
+/// Result of the last successful rename, shown in a modal.
+#[derive(Debug)]
+struct RenameSummary {
+    renamed: usize,
+    /// Entries that were renamed on disk but could not be read back.
+    failures: usize,
+}
+
+impl RenameSummary {
+    /// Footer text describing the same outcome.
+    fn status_line(&self) -> String {
+        if self.failures == 0 {
+            format!(
+                "{} {} renamed",
+                self.renamed,
+                plural(self.renamed, "file", "files")
+            )
+        } else {
+            format!(
+                "{} renamed; {} could not be reloaded",
+                self.renamed, self.failures
+            )
+        }
+    }
+
+    /// Main line of the success modal.
+    fn headline(&self) -> String {
+        format!(
+            "{} {} renamed successfully.",
+            self.renamed,
+            plural(self.renamed, "file was", "files were")
+        )
+    }
+
+    /// Warning line for entries that were renamed but could not be read back.
+    fn reload_warning(&self) -> Option<String> {
+        (self.failures > 0).then(|| {
+            format!(
+                "{} {}",
+                self.failures,
+                plural(
+                    self.failures,
+                    "file could not be reloaded and was removed from the list.",
+                    "files could not be reloaded and were removed from the list.",
+                )
+            )
+        })
+    }
+}
+
 /// A spawned window waiting for a compositor activation token.
 struct PendingWindow {
     paths: Vec<PathBuf>,
@@ -299,6 +349,7 @@ pub(crate) struct RenameRxApp {
     last_rename: Option<Vec<RenameOutcome>>,
     confirm_rename_open: bool,
     rename_error: Option<String>,
+    rename_summary: Option<RenameSummary>,
 
     modals: ModalState,
     rule_settings: Option<RuleSettingsTarget>,
@@ -358,6 +409,7 @@ impl RenameRxApp {
             last_rename: None,
             confirm_rename_open: false,
             rename_error: None,
+            rename_summary: None,
             modals: ModalState::default(),
             rule_settings: None,
             presets: crate::presets::PresetStore::load(),
@@ -507,6 +559,7 @@ impl RenameRxApp {
             || self.preset_delete.is_some()
             || self.confirm_rename_open
             || self.rename_error.is_some()
+            || self.rename_summary.is_some()
     }
 
     fn incoming_modal(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -825,12 +878,10 @@ impl RenameRxApp {
             Ok(outcomes) => {
                 let renamed = outcomes.len();
                 let failures = self.reload_from_outcomes(&outcomes);
+                let summary = RenameSummary { renamed, failures };
+                self.status = summary.status_line();
                 self.last_rename = Some(outcomes);
-                self.status = if failures == 0 {
-                    format!("{renamed} {} renamed", plural(renamed, "file", "files"))
-                } else {
-                    format!("{renamed} renamed; {failures} could not be reloaded")
-                };
+                self.rename_summary = Some(summary);
             }
             Err(error) => {
                 self.status = String::from("Rename failed");
@@ -910,6 +961,7 @@ impl RenameRxApp {
             || self.tools_open
             || self.confirm_rename_open
             || self.rename_error.is_some()
+            || self.rename_summary.is_some()
             || !self.incoming_files.is_empty()
             || egui::Popup::is_any_open(ctx)
         {
@@ -2814,6 +2866,72 @@ impl RenameRxApp {
         }
     }
 
+    fn rename_summary_modal(&mut self, ctx: &egui::Context) {
+        let Some(summary) = &self.rename_summary else {
+            return;
+        };
+
+        let palette = self.palette();
+        let headline = summary.headline();
+        let warning = summary.reload_warning();
+        let mut open = true;
+        let mut undo = false;
+
+        let modal = egui::Modal::new(egui::Id::unique("rename_summary_modal"))
+            .frame(modal_frame(&palette))
+            .show(ctx, |ui| {
+                ui.set_width(440.0);
+
+                ui.label(
+                    RichText::new("Files renamed")
+                        .font(FontId::new(21.0, semibold()))
+                        .color(palette.text),
+                );
+                ui.add_space(10.0);
+                ui.label(RichText::new(headline).size(13.5).color(palette.text));
+
+                if let Some(warning) = warning {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(warning).size(13.0).color(palette.warning));
+                }
+
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(12.0);
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add(
+                            Button::new(RichText::new("Close").color(palette.on_accent))
+                                .fill(palette.accent)
+                                .corner_radius(6)
+                                .min_size(vec2(88.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        open = false;
+                    }
+
+                    if ui.button("Undo Rename").clicked() {
+                        undo = true;
+                        open = false;
+                    }
+                });
+            });
+
+        if modal.should_close() {
+            open = false;
+        }
+
+        if !open {
+            self.rename_summary = None;
+        }
+
+        if undo {
+            self.undo_last_rename();
+        }
+    }
+
     fn drag_overlay(&self, ctx: &egui::Context) {
         let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
         if !hovering {
@@ -2883,6 +3001,7 @@ impl eframe::App for RenameRxApp {
         self.rule_settings_modal(&ctx);
         self.confirm_rename_modal(&ctx);
         self.rename_error_modal(&ctx);
+        self.rename_summary_modal(&ctx);
         self.settings_modal(&ctx);
         self.presets_modal(&ctx);
         self.tools_modal(&ctx);
@@ -4543,6 +4662,44 @@ mod tests {
     use std::ffi::{OsStr, OsString};
 
     use super::*;
+
+    #[test]
+    fn rename_summary_reports_one_renamed_file() {
+        let summary = RenameSummary {
+            renamed: 1,
+            failures: 0,
+        };
+
+        assert_eq!(summary.status_line(), "1 file renamed");
+        assert_eq!(summary.headline(), "1 file was renamed successfully.");
+        assert_eq!(summary.reload_warning(), None);
+    }
+
+    #[test]
+    fn rename_summary_reports_failures_separately() {
+        let summary = RenameSummary {
+            renamed: 3,
+            failures: 2,
+        };
+
+        assert_eq!(summary.status_line(), "3 renamed; 2 could not be reloaded");
+        assert_eq!(summary.headline(), "3 files were renamed successfully.");
+        assert_eq!(
+            summary.reload_warning().as_deref(),
+            Some("2 files could not be reloaded and were removed from the list."),
+            "the warning must explain why the entries left the list"
+        );
+
+        let single = RenameSummary {
+            renamed: 0,
+            failures: 1,
+        };
+        assert_eq!(
+            single.reload_warning().as_deref(),
+            Some("1 file could not be reloaded and was removed from the list."),
+            "a single failure must use the singular wording"
+        );
+    }
 
     #[test]
     fn spin_hold_survives_the_egui_click_window() {
