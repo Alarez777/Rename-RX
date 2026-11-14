@@ -128,7 +128,7 @@ mod tests {
         move_rule(&mut rules).length = 2;
         move_rule(&mut rules).anchor = MoveAnchor::End;
         serialize(&mut rules).enabled = true;
-        serialize(&mut rules).padding = 4;
+        serialize(&mut rules).padding = Some(4);
         serialize(&mut rules).position = SerializePosition::Before;
 
         // Duplicates are part of the persisted state.
@@ -198,6 +198,45 @@ mod tests {
         assert_eq!(replace.replace, "b");
         assert!(rules.sort().enabled);
         assert_eq!(rules.sort().method, SortMethod::Name);
+    }
+
+    #[test]
+    fn legacy_presets_keep_a_manual_padding() {
+        let json = r#"{
+            "presets": [{
+                "name": "Old",
+                "rules": {"serialize": {"padding": 5}}
+            }]
+        }"#;
+        let store: PresetStore = serde_json::from_str(json).unwrap();
+        let rules = &store.presets[0].rules;
+        let Rule::Serialize(serialize) = rules
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == RuleKind::Serialize)
+            .expect("the legacy preset keeps every rule kind")
+        else {
+            panic!("the Serialize rule keeps its kind");
+        };
+
+        assert_eq!(serialize.padding, Some(5));
+    }
+
+    #[test]
+    fn presets_without_a_padding_use_the_automatic_width() {
+        let store: PresetStore =
+            serde_json::from_str(r#"{"presets":[{"name":"Old","rules":{}}]}"#).unwrap();
+        let rules = &store.presets[0].rules;
+        let Rule::Serialize(serialize) = rules
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == RuleKind::Serialize)
+            .expect("the default rule set contains every kind")
+        else {
+            panic!("the Serialize rule keeps its kind");
+        };
+
+        assert_eq!(serialize.padding, None);
     }
 
     #[test]

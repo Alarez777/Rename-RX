@@ -2669,13 +2669,21 @@ impl RenameRxApp {
                                 SPINBOX_WIDTH,
                             );
                             ui.add_space(6.0);
-                            changed |= labeled_spinbox_u32(
-                                ui,
-                                "Padding",
-                                &mut rule.padding,
-                                1..=12,
-                                SPINBOX_WIDTH,
-                            );
+                            let mut automatic = rule.padding.is_none();
+                            if ui.checkbox(&mut automatic, "Automatic padding").changed() {
+                                rule.padding = if automatic { None } else { Some(3) };
+                                changed = true;
+                            }
+                            if let Some(padding) = &mut rule.padding {
+                                ui.add_space(6.0);
+                                changed |= labeled_spinbox_u32(
+                                    ui,
+                                    "Width",
+                                    padding,
+                                    1..=12,
+                                    SPINBOX_WIDTH,
+                                );
+                            }
 
                             ui.add_space(12.0);
                             ui.label(RichText::new("Prefix").size(12.5).color(palette.secondary));
@@ -2686,14 +2694,14 @@ impl RenameRxApp {
                             changed |= text_edit_fill(ui, &mut rule.suffix, "Suffix");
 
                             ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(
-                                    "Padding is the total width of the number (3 → 001). \
-                                     The default prefix is a space.",
-                                )
-                                .size(12.0)
-                                .color(palette.secondary),
-                            );
+                            let hint = if rule.padding.is_none() {
+                                "Automatic padding fits the widest number in the batch \
+                                 (10 files → 01 … 10). The default prefix is a space."
+                            } else {
+                                "Padding is the total width of the number (3 → 001). \
+                                 The default prefix is a space."
+                            };
+                            ui.label(RichText::new(hint).size(12.0).color(palette.secondary));
                         }
                         _ => {}
                     }

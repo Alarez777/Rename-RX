@@ -514,7 +514,10 @@ pub struct SerializeRule {
     /// Constant added to every number.
     pub offset: u32,
     /// Total width of the number, zero-padded.
-    pub padding: u32,
+    ///
+    /// `Some` fixes the width; `None` pads to the widest number in the batch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub padding: Option<u32>,
     /// Where the number is placed.
     pub position: SerializePosition,
     /// Text before the number.
@@ -530,7 +533,7 @@ impl Default for SerializeRule {
             start: 1,
             step: 1,
             offset: 0,
-            padding: 3,
+            padding: None,
             position: SerializePosition::Before,
             // A trailing space keeps the default `001 name` layout; the space
             // travels with the number rather than being a separate separator.
@@ -538,6 +541,25 @@ impl Default for SerializeRule {
             suffix: " ".to_owned(),
         }
     }
+}
+
+impl SerializeRule {
+    /// Width used for a batch: the manual value, or the digits of the largest
+    /// number this rule will generate for that many files.
+    fn effective_padding(&self, batch_len: usize) -> u32 {
+        self.padding.unwrap_or_else(|| {
+            let steps = u64::try_from(batch_len.saturating_sub(1)).unwrap_or(u64::MAX);
+            let last = u64::from(self.start)
+                .saturating_add(steps.saturating_mul(u64::from(self.step)))
+                .saturating_add(u64::from(self.offset));
+            decimal_width(last)
+        })
+    }
+}
+
+/// Number of decimal digits in `number`, counting `0` as one digit.
+fn decimal_width(number: u64) -> u32 {
+    number.checked_ilog10().map_or(1, |exponent| exponent + 1)
 }
 
 /// Where the serial number is placed relative to the base name.
@@ -708,13 +730,14 @@ impl<'rules> CompiledRules<'rules> {
     }
 
     /// Apply the pipeline to one file. `index` is the position of the file in
-    /// the current (sorted) order and drives serialization.
-    pub fn apply(&self, file: &FileEntry, index: usize) -> String {
-        self.apply_parts(file, index).file_name()
+    /// the current (sorted) order and drives serialization; `batch_len` is the
+    /// number of files in that order and sizes automatic zero-padding.
+    pub fn apply(&self, file: &FileEntry, index: usize, batch_len: usize) -> String {
+        self.apply_parts(file, index, batch_len).file_name()
     }
 
     /// Apply the pipeline and return the stem and extension separately.
-    pub fn apply_parts(&self, file: &FileEntry, index: usize) -> NameParts {
+    pub fn apply_parts(&self, file: &FileEntry, index: usize, batch_len: usize) -> NameParts {
         let (stem, extension) = file.name_parts();
         let mut stem = stem.to_owned();
         let mut extension = extension.to_owned();
@@ -784,7 +807,7 @@ impl<'rules> CompiledRules<'rules> {
                         stem = serialize(
                             &stem,
                             number,
-                            rule.padding,
+                            rule.effective_padding(batch_len),
                             rule.position,
                             &rule.prefix,
                             &rule.suffix,
@@ -1004,8 +1027,8 @@ mod tests {
         }
     }
 
-    fn apply(rules: &RuleSet, name: &str, index: usize) -> String {
-        CompiledRules::new(rules).apply(&entry(name), index)
+    fn apply(rules: &RuleSet, name: &str, index: usize, batch_len: usize) -> String {
+        CompiledRules::new(rules).apply(&entry(name), index, batch_len)
     }
 
     fn rule_mut<'a, T>(
@@ -1104,12 +1127,12 @@ mod tests {
         serialize(&mut rules).enabled = true;
 
         assert_eq!(
-            apply(&rules, "HEC-0941.jpg", 0),
-            "001 París Winter 2017.jpg"
+            apply(&rules, "HEC-0941.jpg", 0, 2),
+            "1 París Winter 2017.jpg"
         );
         assert_eq!(
-            apply(&rules, "HEC-0942.jpg", 1),
-            "002 París Winter 2017.jpg"
+            apply(&rules, "HEC-0942.jpg", 1, 2),
+            "2 París Winter 2017.jpg"
         );
     }
 
@@ -1124,7 +1147,7 @@ mod tests {
         suffix(&mut rules).enabled = true;
         suffix(&mut rules).text = "!".to_owned();
 
-        assert_eq!(apply(&rules, "a.jpg", 0), "X 001 Pic!.jpg");
+        assert_eq!(apply(&rules, "a.jpg", 0, 1), "X 1 Pic!.jpg");
     }
 
     #[test]
@@ -1135,10 +1158,10 @@ mod tests {
         replace(&mut rules).replace = "dog".to_owned();
         replace(&mut rules).case_sensitive = false;
 
-        assert_eq!(apply(&rules, "Cat catalog.txt", 0), "dog dogalog.txt");
+        assert_eq!(apply(&rules, "Cat catalog.txt", 0, 1), "dog dogalog.txt");
 
         replace(&mut rules).whole_word = true;
-        assert_eq!(apply(&rules, "Cat catalog.txt", 0), "dog catalog.txt");
+        assert_eq!(apply(&rules, "Cat catalog.txt", 0, 1), "dog catalog.txt");
     }
 
     #[test]
@@ -1148,7 +1171,7 @@ mod tests {
         regex(&mut rules).pattern = r"(\d+)".to_owned();
         regex(&mut rules).replacement = "[$1]".to_owned();
 
-        assert_eq!(apply(&rules, "IMG 1234.jpg", 0), "IMG [1234].jpg");
+        assert_eq!(apply(&rules, "IMG 1234.jpg", 0, 1), "IMG [1234].jpg");
     }
 
     #[test]
@@ -1237,7 +1260,7 @@ mod tests {
         remove(&mut rules).origin = CharacterOrigin::Before;
         remove(&mut rules).position = 0;
 
-        assert_eq!(apply(&rules, "original.txt", 0), "cd.txt");
+        assert_eq!(apply(&rules, "original.txt", 0, 1), "cd.txt");
     }
 
     #[test]
@@ -1346,7 +1369,7 @@ mod tests {
         move_rule(&mut rules).destination = CharacterOrigin::After;
         move_rule(&mut rules).offset = 0;
 
-        assert_eq!(apply(&rules, "original.txt", 0), "cdb.txt");
+        assert_eq!(apply(&rules, "original.txt", 0, 1), "cdb.txt");
     }
 
     #[test]
@@ -1355,7 +1378,7 @@ mod tests {
         assert_eq!(remove(&mut rules).count, 1);
 
         remove(&mut rules).enabled = true;
-        assert_eq!(apply(&rules, "abcdef.txt", 0), "bcdef.txt");
+        assert_eq!(apply(&rules, "abcdef.txt", 0, 1), "bcdef.txt");
     }
 
     #[test]
@@ -1365,11 +1388,11 @@ mod tests {
         remove(&mut rules).count = 2;
         remove(&mut rules).position = 1;
 
-        assert_eq!(apply(&rules, "abcdef.txt", 0), "adef.txt");
+        assert_eq!(apply(&rules, "abcdef.txt", 0, 1), "adef.txt");
 
         remove(&mut rules).origin = CharacterOrigin::After;
         remove(&mut rules).position = 0;
-        assert_eq!(apply(&rules, "abcdef.txt", 0), "abcd.txt");
+        assert_eq!(apply(&rules, "abcdef.txt", 0, 1), "abcd.txt");
     }
 
     #[test]
@@ -1377,16 +1400,16 @@ mod tests {
         let mut rules = RuleSet::default();
         extension(&mut rules).enabled = true;
         extension(&mut rules).value = ".PNG".to_owned();
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo.PNG");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 1), "photo.PNG");
 
         extension(&mut rules).value.clear();
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 1), "photo");
 
         extension(&mut rules).enabled = false;
         case(&mut rules).enabled = true;
         case(&mut rules).mode = CaseMode::Title;
         assert_eq!(
-            apply(&rules, "HEC-0941 vacation.jpg", 0),
+            apply(&rules, "HEC-0941 vacation.jpg", 0, 1),
             "Hec-0941 Vacation.jpg"
         );
     }
@@ -1397,7 +1420,7 @@ mod tests {
         assert_eq!(rule.start, 1);
         assert_eq!(rule.step, 1);
         assert_eq!(rule.offset, 0);
-        assert_eq!(rule.padding, 3);
+        assert_eq!(rule.padding, None);
         assert_eq!(rule.position, SerializePosition::Before);
         assert_eq!(rule.prefix, "");
         assert_eq!(rule.suffix, " ");
@@ -1407,15 +1430,61 @@ mod tests {
     fn serialize_supports_position_padding_and_step() {
         let mut rules = RuleSet::default();
         serialize(&mut rules).enabled = true;
-        serialize(&mut rules).padding = 4;
+        serialize(&mut rules).padding = Some(4);
         serialize(&mut rules).start = 10;
         serialize(&mut rules).step = 5;
         serialize(&mut rules).position = SerializePosition::Before;
         serialize(&mut rules).prefix.clear();
         serialize(&mut rules).suffix = "-".to_owned();
 
-        assert_eq!(apply(&rules, "a.txt", 0), "0010-a.txt");
-        assert_eq!(apply(&rules, "a.txt", 2), "0020-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 0, 1), "0010-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 2, 1), "0020-a.txt");
+    }
+
+    #[test]
+    fn serialize_padding_follows_the_batch_size() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 8, 9), "9-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 0, 10), "01-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "10-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 0, 100), "001-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 99, 100), "100-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 999, 1000), "1000-a.txt");
+    }
+
+    #[test]
+    fn serialize_auto_padding_accounts_for_start_step_and_offset() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+        serialize(&mut rules).start = 95;
+
+        assert_eq!(apply(&rules, "a.txt", 0, 10), "095-a.txt");
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "104-a.txt");
+
+        serialize(&mut rules).start = 1;
+        serialize(&mut rules).step = 100;
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "901-a.txt");
+
+        serialize(&mut rules).step = 1;
+        serialize(&mut rules).offset = 990;
+        assert_eq!(apply(&rules, "a.txt", 9, 10), "1000-a.txt");
+    }
+
+    #[test]
+    fn serialize_manual_padding_overrides_the_batch_size() {
+        let mut rules = RuleSet::default();
+        serialize(&mut rules).enabled = true;
+        serialize(&mut rules).padding = Some(4);
+        serialize(&mut rules).prefix.clear();
+        serialize(&mut rules).suffix = "-".to_owned();
+
+        assert_eq!(apply(&rules, "a.txt", 0, 10), "0001-a.txt");
     }
 
     #[test]
@@ -1425,8 +1494,8 @@ mod tests {
         serialize(&mut rules).start = 1;
         serialize(&mut rules).offset = 2;
 
-        assert_eq!(apply(&rules, "photo.jpg", 0), "003 photo.jpg");
-        assert_eq!(apply(&rules, "photo.jpg", 1), "004 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 10), "03 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 1, 10), "04 photo.jpg");
     }
 
     #[test]
@@ -1437,12 +1506,12 @@ mod tests {
         serialize(&mut rules).prefix = " [".to_owned();
         serialize(&mut rules).suffix = "]".to_owned();
 
-        assert_eq!(apply(&rules, "photo.jpg", 0), "photo [001].jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 10), "photo [01].jpg");
 
         serialize(&mut rules).position = SerializePosition::Before;
         serialize(&mut rules).prefix.clear();
         serialize(&mut rules).suffix = " ".to_owned();
-        assert_eq!(apply(&rules, "photo.jpg", 0), "001 photo.jpg");
+        assert_eq!(apply(&rules, "photo.jpg", 0, 10), "01 photo.jpg");
     }
 
     #[test]
@@ -1453,7 +1522,7 @@ mod tests {
 
         let compiled = CompiledRules::new(&rules);
         assert_eq!(compiled.errors.len(), 1);
-        assert_eq!(compiled.apply(&entry("a.txt"), 0), "a.txt");
+        assert_eq!(compiled.apply(&entry("a.txt"), 0, 1), "a.txt");
     }
 
     #[test]
@@ -1504,14 +1573,14 @@ mod tests {
 
         rules.insert(index, Rule::Replace(a_to_b.clone()));
         rules.insert(index + 1, Rule::Replace(b_to_c.clone()));
-        assert_eq!(apply(&rules, "x.txt", 0), "cc.txt");
+        assert_eq!(apply(&rules, "x.txt", 0, 1), "cc.txt");
 
         let mut reversed = RuleSet::default();
         new_name(&mut reversed).enabled = true;
         new_name(&mut reversed).value = "aa".to_owned();
         reversed.insert(index, Rule::Replace(b_to_c));
         reversed.insert(index + 1, Rule::Replace(a_to_b));
-        assert_eq!(apply(&reversed, "x.txt", 0), "bb.txt");
+        assert_eq!(apply(&reversed, "x.txt", 0, 1), "bb.txt");
     }
 
     #[test]
