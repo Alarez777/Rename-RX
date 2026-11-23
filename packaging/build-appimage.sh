@@ -34,7 +34,7 @@ case "$(uname -m)" in
 esac
 APPIMAGETOOL="$TOOLS/appimagetool-${TOOL_ARCH}.AppImage"
 APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${TOOL_ARCH}.AppImage}"
-URUNTIME_VERSION="${RENAME_RX_URUNTIME_VERSION:-v0.8.3}"
+URUNTIME_VERSION="${RENAME_RX_URUNTIME_VERSION:-v0.8.5}"
 if [[ ! "$URUNTIME_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "error: invalid uruntime version: $URUNTIME_VERSION (expected vX.Y.Z)" >&2
     exit 1
@@ -50,14 +50,14 @@ case "$TARGET_ARCH" in
         ;;
 esac
 
-# SHA-256 digests published with uruntime v0.8.3. Override the digest when
+# SHA-256 digests published with uruntime v0.8.5. Override the digest when
 # testing another release through RENAME_RX_URUNTIME_VERSION.
 case "$TARGET_ARCH" in
     x86_64)
-        URUNTIME_SHA256="${RENAME_RX_URUNTIME_SHA256:-85caec9c27c60933f1754281dd39b423f557b1d821a137698d98e6433f48e209}"
+        URUNTIME_SHA256="${RENAME_RX_URUNTIME_SHA256:-95fcae18298788ee08e8fc29c4e33ac85dcd2b01fb631dda33d60b8ab8e5b4a5}"
         ;;
     aarch64)
-        URUNTIME_SHA256="${RENAME_RX_URUNTIME_SHA256:-731fe2ae7eedee32284a4e70bd40cfabaa0b3c401c74fbec744e9d7dbbb725bb}"
+        URUNTIME_SHA256="${RENAME_RX_URUNTIME_SHA256:-48dbb5d7ff4bdfdbfbfaf675e6ab21fa6646df693915c066a7443576967045e1}"
         ;;
 esac
 

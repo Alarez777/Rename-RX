@@ -142,6 +142,9 @@ Requirements:
 - Rust 1.98 or newer
 - Linux with X11 or Wayland, and OpenGL
 
+The repository pins that toolchain in `rust-toolchain.toml`, so rustup installs
+and uses it automatically.
+
 ```sh
 cargo run -p rename-rx
 cargo run -p rename-rx -- path/to/file1 path/to/file2
@@ -154,7 +157,7 @@ cargo run -p rename-rx -- path/to/file1 path/to/file2
 ```
 
 The script builds a release binary on the host and downloads `appimagetool`
-and the pinned uruntime v0.8.3 release into `dist/.tools` on the first run.
+and the pinned uruntime v0.8.5 release into `dist/.tools` on the first run.
 The runtime is verified against its published SHA-256; if you test another
 release with `RENAME_RX_URUNTIME_VERSION`, set `RENAME_RX_URUNTIME_SHA256`
 too. To package a binary built elsewhere (for example in Debian 12 for older
