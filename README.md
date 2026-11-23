@@ -142,6 +142,9 @@ Requirements:
 - Rust 1.98 or newer
 - Linux with X11 or Wayland, and OpenGL
 
+The repository pins that toolchain in `rust-toolchain.toml`, so rustup installs
+and uses it automatically.
+
 ```sh
 cargo run -p rename-rx
 cargo run -p rename-rx -- path/to/file1 path/to/file2
