@@ -43,7 +43,10 @@ fn main() -> eframe::Result {
             .with_decorations(
                 settings::Settings::load().window_controls.resolved()
                     != settings::WindowControlsStyle::Adwaita,
-            ),
+            )
+            // The custom headerbar rounds its own top and bottom corners; the
+            // window surface stays transparent so they show the desktop.
+            .with_transparent(true),
         ..Default::default()
     };
 
