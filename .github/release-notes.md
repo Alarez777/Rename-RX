@@ -1,4 +1,4 @@
-# Rename RX 0.2.1
+# Rename RX 0.2.2
 
 A lightweight, fast batch file renamer for Linux, written in Rust and inspired
 by the workflow of **Rename X** for macOS.
@@ -11,23 +11,14 @@ by the workflow of **Rename X** for macOS.
 
 The AppImages are built on Debian 12 and require glibc **2.35 or newer**.
 
-## What's new in 0.2.1
+## What's new in 0.2.2
 
-- **Rename summary:** a dialog reports how many files were renamed, including
-  any that could not be reloaded, and offers **Undo Rename** directly.
-- **Automatic Serialize padding:** the width follows the batch and never drops
-  below a configurable minimum (default 2), so a short series keeps a
-  convention such as `s01e08`. The last manual width is remembered while
-  automatic mode is on.
-- **Enable on edit:** typing in a rule's field or changing its spinbox, combo
-  or settings now enables that rule automatically.
-- **Single instance:** opening files from another launch reuses and focuses
-  the existing window instead of starting a second one.
-- **Resizable file table:** the name column can be resized and the table has a
-  grid.
-- **Spinbox repeat:** holding the arrow buttons repeats the step.
-- **New AppImage runtime:** images now embed uruntime v0.8.3, downloaded and
-  verified against its published SHA-256 during the build.
+- **Rounded window corners:** the integrated Adwaita headerbar and footer now
+  have rounded corners on composited desktops. X11 sessions without a
+  compositor fall back to square corners instead of black transparent corners.
+- **AppImage runtime:** images now embed uruntime v0.8.5, which preserves
+  `ARGV0` when FUSE is unavailable or a mount retries. The build downloads and
+  verifies the runtime's published SHA-256.
 
 ## Highlights
 
@@ -38,9 +29,14 @@ The AppImages are built on Debian 12 and require glibc **2.35 or newer**.
   below it. Duplicates show `−` and can be removed independently. The source
   rule is enabled when a duplicate is added.
 - **Toggle from the name:** double-click any rule name to enable or disable it.
+- **Rename summary:** after renaming, a dialog reports the result and offers
+  **Undo Rename** directly.
+- **Automatic Serialize padding:** the width follows the batch and respects a
+  configurable minimum, keeping conventions such as `s01e08`.
+- Editing a rule's controls or settings enables the rule automatically.
 - Per-rule options for Replace, Regular Expression and Serialize.
 - Saved presets.
-- Adwaita light/dark/system theme and a custom headerbar.
+- Adwaita light/dark/system theme and a rounded custom headerbar.
 - Desktop integration for GNOME.
 - Context-menu actions for Nemo, Nautilus, Thunar and Dolphin.
 
