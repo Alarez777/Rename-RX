@@ -331,6 +331,7 @@ struct PendingWindow {
 
 pub(crate) struct RenameRxApp {
     settings: Settings,
+    window_surface: WindowSurface,
     theme: Theme,
     system_dark: Option<bool>,
     watcher: Option<dark_light::Watcher>,
@@ -376,6 +377,7 @@ impl RenameRxApp {
         cc: &eframe::CreationContext<'_>,
         initial_paths: Vec<PathBuf>,
         server: Option<InstanceServer>,
+        window_surface: WindowSurface,
     ) -> Self {
         theme::install(&cc.egui_ctx);
 
@@ -392,6 +394,7 @@ impl RenameRxApp {
 
         let mut app = Self {
             settings,
+            window_surface,
             theme,
             system_dark,
             watcher,
@@ -1025,6 +1028,14 @@ impl RenameRxApp {
 
     // ---------------------------------------------------------------- header
 
+    /// Corners stay square when the window cannot be transparent.
+    fn window_corner_radius(&self, ctx: &egui::Context) -> u8 {
+        match self.window_surface {
+            WindowSurface::Transparent => WindowCorners::from_context(ctx).radius(),
+            WindowSurface::Opaque => 0,
+        }
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "egui layout reads as one declarative block; splitting it scatters widget order"
@@ -1037,7 +1048,7 @@ impl RenameRxApp {
         let warnings = self.preview.report.warnings();
         let issue_count = errors + warnings;
         let can_undo = self.last_rename.is_some();
-        let radius = WindowCorners::from_context(ui.ctx()).radius();
+        let radius = self.window_corner_radius(ui.ctx());
 
         egui::Panel::top("headerbar")
             .exact_size(theme::HEADER_HEIGHT)
@@ -1535,7 +1546,7 @@ impl RenameRxApp {
 
     fn footer(&mut self, ui: &mut Ui) {
         let palette = self.palette();
-        let radius = WindowCorners::from_context(ui.ctx()).radius();
+        let radius = self.window_corner_radius(ui.ctx());
         let file_count = self.files.len();
         let selected_count = self.selected.len();
         let has_files = file_count > 0;
@@ -3147,7 +3158,7 @@ fn pointer_on_column_separator(ui: &Ui, header_rects: &[Rect], spacing: f32) -> 
 }
 
 /// Winit selects Wayland when either of these variables is present.
-fn is_wayland_session() -> bool {
+pub(crate) fn is_wayland_session() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty())
         || std::env::var_os("WAYLAND_SOCKET").is_some_and(|value| !value.is_empty())
 }
@@ -4039,6 +4050,12 @@ const WINDOW_CORNER_RADIUS: u8 = 12;
 enum WindowCorners {
     Rounded,
     Square,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowSurface {
+    Transparent,
+    Opaque,
 }
 
 impl WindowCorners {
