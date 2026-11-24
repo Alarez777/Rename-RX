@@ -122,6 +122,8 @@ The **Presets** view saves the complete rule configuration under a name:
 - Adwaita-style dark and light themes, or follow the system preference.
 - Custom Adwaita headerbar with minimize, maximize/restore, close, dragging and
   resize edges.
+- Rounded window corners when the compositor supports transparency; square
+  corners on X11 without a compositor.
 - Window style selector ready for future platform-specific styles.
 
 ## Keyboard shortcuts
