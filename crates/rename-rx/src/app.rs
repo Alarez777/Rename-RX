@@ -331,6 +331,7 @@ struct PendingWindow {
 
 pub(crate) struct RenameRxApp {
     settings: Settings,
+    window_surface: WindowSurface,
     theme: Theme,
     system_dark: Option<bool>,
     watcher: Option<dark_light::Watcher>,
@@ -376,6 +377,7 @@ impl RenameRxApp {
         cc: &eframe::CreationContext<'_>,
         initial_paths: Vec<PathBuf>,
         server: Option<InstanceServer>,
+        window_surface: WindowSurface,
     ) -> Self {
         theme::install(&cc.egui_ctx);
 
@@ -392,6 +394,7 @@ impl RenameRxApp {
 
         let mut app = Self {
             settings,
+            window_surface,
             theme,
             system_dark,
             watcher,
@@ -1025,6 +1028,14 @@ impl RenameRxApp {
 
     // ---------------------------------------------------------------- header
 
+    /// Corners stay square when the window cannot be transparent.
+    fn window_corner_radius(&self, ctx: &egui::Context) -> u8 {
+        match self.window_surface {
+            WindowSurface::Transparent => WindowCorners::from_context(ctx).radius(),
+            WindowSurface::Opaque => 0,
+        }
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "egui layout reads as one declarative block; splitting it scatters widget order"
@@ -1037,6 +1048,7 @@ impl RenameRxApp {
         let warnings = self.preview.report.warnings();
         let issue_count = errors + warnings;
         let can_undo = self.last_rename.is_some();
+        let radius = self.window_corner_radius(ui.ctx());
 
         egui::Panel::top("headerbar")
             .exact_size(theme::HEADER_HEIGHT)
@@ -1044,6 +1056,12 @@ impl RenameRxApp {
             .frame(
                 Frame::new()
                     .fill(palette.header)
+                    .corner_radius(CornerRadius {
+                        nw: radius,
+                        ne: radius,
+                        sw: 0,
+                        se: 0,
+                    })
                     .inner_margin(Margin::symmetric(12, 7)),
             )
             .show(ui, |ui| {
@@ -1528,6 +1546,7 @@ impl RenameRxApp {
 
     fn footer(&mut self, ui: &mut Ui) {
         let palette = self.palette();
+        let radius = self.window_corner_radius(ui.ctx());
         let file_count = self.files.len();
         let selected_count = self.selected.len();
         let has_files = file_count > 0;
@@ -1567,6 +1586,12 @@ impl RenameRxApp {
             .frame(
                 Frame::new()
                     .fill(palette.header)
+                    .corner_radius(CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: radius,
+                        se: radius,
+                    })
                     .inner_margin(Margin::symmetric(16, 10)),
             )
             .show(ui, |ui| {
@@ -2987,6 +3012,11 @@ impl RenameRxApp {
 }
 
 impl eframe::App for RenameRxApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Transparent corners let the custom headerbar and footer look rounded.
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
@@ -3128,7 +3158,7 @@ fn pointer_on_column_separator(ui: &Ui, header_rects: &[Rect], spacing: f32) -> 
 }
 
 /// Winit selects Wayland when either of these variables is present.
-fn is_wayland_session() -> bool {
+pub(crate) fn is_wayland_session() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty())
         || std::env::var_os("WAYLAND_SOCKET").is_some_and(|value| !value.is_empty())
 }
@@ -4013,6 +4043,39 @@ fn settings_button(ui: &mut Ui, palette: &Palette, kind: RuleSettings) -> bool {
     clicked
 }
 
+/// Rounds the custom headerbar and footer unless the window is maximized.
+const WINDOW_CORNER_RADIUS: u8 = 12;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowCorners {
+    Rounded,
+    Square,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowSurface {
+    Transparent,
+    Opaque,
+}
+
+impl WindowCorners {
+    fn from_context(ctx: &egui::Context) -> Self {
+        let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+        if maximized {
+            Self::Square
+        } else {
+            Self::Rounded
+        }
+    }
+
+    fn radius(self) -> u8 {
+        match self {
+            Self::Rounded => WINDOW_CORNER_RADIUS,
+            Self::Square => 0,
+        }
+    }
+}
+
 fn handle_window_resize(ctx: &egui::Context) {
     let Some(position) = ctx.input(|input| input.pointer.hover_pos()) else {
         return;
@@ -4691,6 +4754,12 @@ mod tests {
     use std::ffi::{OsStr, OsString};
 
     use super::*;
+
+    #[test]
+    fn window_corners_are_square_only_when_maximized() {
+        assert_eq!(WindowCorners::Rounded.radius(), WINDOW_CORNER_RADIUS);
+        assert_eq!(WindowCorners::Square.radius(), 0);
+    }
 
     #[test]
     fn rename_summary_reports_one_renamed_file() {

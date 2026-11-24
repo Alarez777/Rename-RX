@@ -2926,6 +2926,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "x11rb",
 ]
 
 [[package]]
